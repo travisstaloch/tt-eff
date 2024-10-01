@@ -10,6 +10,11 @@
             .url = "https://github.com/raysan5/raylib/releases/download/5.0/raylib-5.0_linux_amd64.tar.gz",
             .hash = "122041e7e8965f8a9ea4f8e9e1259620649e466dd5dbe51fc4fb541dc41b67c205e1",
         },
+        .clarp = .{
+            .url = "https://github.com/travisstaloch/clarp/archive/69212b79c73c98fba1ace967591bf1390ce71895.tar.gz",
+            .hash = "1220613a84cb95d6e1119504ebf173688e216dc18cf688625fd35b0c99cfa67c089d",
+            //.path = "../clarp",
+        },
     },
 
     .paths = .{

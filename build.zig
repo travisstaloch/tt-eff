@@ -18,6 +18,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         });
         exe.root_module.addImport("tt-eff", mod);
+        exe.root_module.addImport("clarp", b.dependency("clarp", .{}).module("clarp"));
 
         b.installArtifact(exe);
         const run_cmd = b.addRunArtifact(exe);
