@@ -38,13 +38,15 @@ pub fn main() !void {
     defer fontData.deinit(alloc);
 
     const text: []const u8 = if (true) try std.mem.concat(alloc, u8, &.{
-        font.getName(.full_name) orelse "Missing font name",
-        "abcdefghi",
-        "jklmnopqr",
-        "stuvwxyz",
-        "ABCDEFGHI",
-        "JKLMNOPQR",
-        "STUVWXYZ",
+        font.getName(.familyName) orelse "Missing family name",
+        "-",
+        font.getName(.subfamilyName) orelse "Missing sub family name",
+        "\nabcdefghi",
+        "\njklmnopqr",
+        "\nstuvwxyz",
+        "\nABCDEFGHI",
+        "\nJKLMNOPQR",
+        "\nSTUVWXYZ",
     })
     // try alloc.dupe(u8, "ABC")
     else blk: {
@@ -67,11 +69,16 @@ pub fn main() !void {
         break :blk text;
     };
     defer alloc.free(text);
-    const options = GlyphHelper.RenderOptions{ .direction = .downward_y };
+    const options = GlyphHelper.RenderOptions{ .direction = .downwardY };
     var textData = try ttf.TextData.init(alloc, text, fontData);
     for (textData.uniquePrintableCharacters) |pc| debug("pc {}\n", .{pc});
     defer textData.deinit(alloc);
-    var renderDataMap = try GlyphHelper.createRenderDataMap(alloc, textData.uniquePrintableCharacters, fontData, options);
+    var renderDataMap = try GlyphHelper.createRenderDataMap(
+        alloc,
+        textData.uniquePrintableCharacters,
+        fontData,
+        options,
+    );
     defer GlyphHelper.destroyRenderDataMap(&renderDataMap, alloc);
     debug("renderDataMap {any}\n", .{renderDataMap.keys()});
     const settings = ttf.TextRender.LayoutSettings.init(1.0 / 2.0, 1, 2.1, 1, wh);
@@ -119,7 +126,7 @@ pub fn main() !void {
     rl.CloseWindow();
 }
 
-const point_pixel_size = 2;
+const pointPixelSize = 2;
 
 fn drawTextData(
     textData: ttf.TextData,
@@ -127,26 +134,28 @@ fn drawTextData(
     resolution: u16,
     settings: ttf.TextRender.LayoutSettings,
 ) !void {
-    // draw horizontal gray line
-    const pc0 = textData.printableCharacters[0];
-    const posn0 = f32x2.init(
-        pc0.getAdvanceX(settings.fontSizePx, settings.letterSpacing, settings.wordSpacing),
-        pc0.getAdvanceY(settings.fontSizePx, settings.lineSpacing),
-    );
-    const pos0 = settings.scaleNormalized(posn0);
-    rl.DrawLineV(@bitCast(f32x2.init(0, pos0.y)), @bitCast(f32x2.init(wh.x * 1000, pos0.y)), rl.GRAY);
-
+    var lastPosn = f32x2.initS(std.math.floatMax(f32));
     for (textData.printableCharacters) |pc| {
-        const glyphData = textData.uniquePrintableCharacters[pc.uniqueGlyphIndex];
-        const cp: u21 = @intCast(glyphData.unicodeValue);
-        const bc = renderDataMap.get(cp).?;
         const posn = f32x2.init(
             pc.getAdvanceX(settings.fontSizePx, settings.letterSpacing, settings.wordSpacing),
             pc.getAdvanceY(settings.fontSizePx, settings.lineSpacing),
         );
+        if (posn.y != lastPosn.y) {
+            // draw horizontal gray line at newlines
+            rl.DrawLineV(
+                @bitCast(f32x2.init(0, pc.offsetY)),
+                @bitCast(f32x2.init(wh.x * 1000, pc.offsetY)),
+                rl.GRAY,
+            );
+        }
+        lastPosn = posn;
+
+        const glyphData = textData.uniquePrintableCharacters[pc.uniqueGlyphIndex];
+        const cp: u21 = @intCast(glyphData.unicodeValue);
+        const bc = renderDataMap.get(cp).?;
         const pos = settings.scaleNormalized(posn);
 
-        debug(
+        std.debug.print(
             "{u} posn {d:.1} pos {d:.0}  centre {d:.1} size {d:.1} contours {} settings {d:.1}/{d:.1}/{d:.1}/{d:.1}\n",
             .{ cp, posn, pos, bc.glyphBounds.centre, bc.glyphBounds.size, bc.contours.endIndices.len, settings.fontSizePx, settings.letterSpacing, settings.lineSpacing, settings.wordSpacing },
         );
@@ -158,12 +167,11 @@ fn drawTextData(
 fn drawGlyph(
     gd: ttf.GlyphData,
     bc: GlyphHelper.BoundsAndContours,
-    ipos: f32x2,
+    pos: f32x2,
     resolution: u16,
     settings: ttf.TextRender.LayoutSettings,
 ) void {
     const colors = [_]rl.Color{ rl.RED, rl.GREEN, rl.BLUE, rl.YELLOW };
-    const pos = ipos;
     var i: u32 = 0;
     debug("contours.endIndices {any} pos {d:.1}\n", .{ bc.contours.endIndices, pos });
     for (bc.contours.endIndices, 0..) |end, ci| {
@@ -172,10 +180,10 @@ fn drawGlyph(
         const expected = if (ci == 0) 0 else bc.contours.endIndices[ci - 1];
         debug("i {} end {} expected {}\n", .{ i, end, expected });
         std.debug.assert(i == expected);
-        // draw contour start point
+        // draw accented contour start point
         rl.DrawCircleV(
             @bitCast(adjust(bc.contours.points[i], pos, bc.glyphBounds, settings)),
-            point_pixel_size * 3,
+            pointPixelSize * 3,
             rl.ORANGE,
         );
 
@@ -194,7 +202,7 @@ fn drawGlyph(
             drawBezier(vs, resolution, colors[ci % colors.len]);
 
             for (0..2) |j| {
-                rl.DrawCircleV(@bitCast(vs[j]), point_pixel_size, rl.GRAY);
+                rl.DrawCircleV(@bitCast(vs[j]), pointPixelSize, rl.GRAY);
                 var buf: [20]u8 = undefined;
                 var fbs = std.io.fixedBufferStream(&buf);
                 fbs.writer().print("{}\x00", .{i + j}) catch unreachable;
@@ -211,7 +219,7 @@ fn drawGlyph(
         // const v: rl.f32x2 = @bitCast(p.vec2());
         const adj = adjust(p.vec2(), pos, bc.glyphBounds);
         const v: rl.Vector2 = @bitCast(adj);
-        rl.DrawCircleV(v, point_pixel_size, if (p.onCurve) rl.WHITE else rl.GRAY);
+        rl.DrawCircleV(v, pointPixelSize, if (p.onCurve) rl.WHITE else rl.GRAY);
         var buf: [20]u8 = undefined;
         var fbs = std.io.fixedBufferStream(&buf);
         fbs.writer().print("{}\x00", .{index}) catch unreachable;
@@ -301,7 +309,7 @@ fn drawOnceBezier(
     // rl.DrawLineV(@bitCast(vs[0]), @bitCast(vs[1]), colors[endidx % colors.len]);
     rl.DrawCircleV(
         @bitCast(adjust(.from(p0.xy.x, p0.xy.y), offset, scale)),
-        point_pixel_size,
+        pointPixelSize,
         if (p0.onCurve) rl.BLUE else rl.RED,
     );
     var buf: [20]u8 = undefined;
@@ -330,7 +338,7 @@ fn drawOnce(
     rl.DrawLineV(@bitCast(vs[0]), @bitCast(vs[1]), colors[endidx % colors.len]);
     rl.DrawCircleV(
         @bitCast(adjust(.from(p0.xy.x, p0.xy.y), offset, scale)),
-        point_pixel_size,
+        pointPixelSize,
         if (p0.onCurve) rl.BLUE else rl.RED,
     );
     var buf: [20]u8 = undefined;

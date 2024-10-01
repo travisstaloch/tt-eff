@@ -6,8 +6,8 @@ pub const BoundsAndContours = struct { glyphBounds: GlyphBounds, contours: Conto
 pub const RenderDataMap = std.AutoArrayHashMapUnmanaged(u32, BoundsAndContours);
 
 pub const RenderOptions = struct {
-    direction: Direction = .downward_y,
-    pub const Direction = enum { downward_y, upward_y };
+    direction: Direction = .downwardY,
+    pub const Direction = enum { downwardY, upwardY };
 };
 
 pub fn createRenderDataMap(
@@ -60,17 +60,17 @@ pub fn createContoursWithImpliedPoints(
 
     // temporary lists
     var contour = std.ArrayListUnmanaged(f32x2){};
-    var contour_mon = std.ArrayListUnmanaged(f32x2){};
+    var contourMon = std.ArrayListUnmanaged(f32x2){};
     // without these ensureTotalCapacity() calls, there is often a segfault below.
     try contour.ensureTotalCapacity(alloc, 32);
-    try contour_mon.ensureTotalCapacity(alloc, 32);
+    try contourMon.ensureTotalCapacity(alloc, 32);
     defer {
         contour.deinit(alloc);
-        contour_mon.deinit(alloc);
+        contourMon.deinit(alloc);
     }
     for (glyph.contourEndIndices) |contourEndIndex| {
         contour.clearRetainingCapacity();
-        contour_mon.clearRetainingCapacity();
+        contourMon.clearRetainingCapacity();
         const contourLen = contourEndIndex - startPointIndex;
         ttf.debug(
             "  {}..{}:{}/{}\n",
@@ -90,7 +90,7 @@ pub fn createContoursWithImpliedPoints(
             const curr = contourPoints[(i + firstOnCurvePointIndex + 0) % contourPoints.len];
             const next = contourPoints[(i + firstOnCurvePointIndex + 1) % contourPoints.len];
             const currv, const nextv = .{ curr.vec2(), next.vec2() };
-            // if (options.direction == .downward_y) {
+            // if (options.direction == .downwardY) {
             //     currv = xyMax.sub(currv);
             //     nextv = xyMax.sub(nextv);
             // }
@@ -106,11 +106,11 @@ pub fn createContoursWithImpliedPoints(
         // ttf.debug("contour {*}/{}\n", .{ contour.items.ptr, contour.items.len });
         const first = contour.items[0];
         try contour.append(alloc, first); // <- segfault happens here
-        try makeMonotonic(alloc, contour.items, &contour_mon);
-        const end = points.items.len + contour_mon.items.len;
-        // ttf.debug("  points {} contour_mon len {} end {}\n", .{ points.items.len, contour_mon.items.len, end });
+        try makeMonotonic(alloc, contour.items, &contourMon);
+        const end = points.items.len + contourMon.items.len;
+        // ttf.debug("  points {} contourMon len {} end {}\n", .{ points.items.len, contourMon.items.len, end });
         try endIndices.append(alloc, @intCast(end));
-        try points.appendSlice(alloc, contour_mon.items);
+        try points.appendSlice(alloc, contourMon.items);
         startPointIndex = contourEndIndex;
     }
     const last = if (endIndices.items.len > 0) endIndices.getLast() else 0;
@@ -197,7 +197,12 @@ fn splitAtTurningPointY(p0: f32x2, p1: f32x2, p2: f32x2) struct { a1: f32x2, a2:
     const lambdaB = (turningPoint.y - p2.y) / (2 * a.y + b.y);
     const p1B_x = p2.x + (2 * a.x + b.x) * lambdaB;
 
-    return .{ .a1 = .init(p1A_x, turningPoint.y), .a2 = turningPoint, .b1 = .init(p1B_x, turningPoint.y), .b2 = p2 };
+    return .{
+        .a1 = .init(p1A_x, turningPoint.y),
+        .a2 = turningPoint,
+        .b1 = .init(p1B_x, turningPoint.y),
+        .b2 = p2,
+    };
 }
 
 const std = @import("std");

@@ -108,7 +108,7 @@ const Table = extern struct {
         }
     };
 
-    const num_tags = @typeInfo(Tag).@"enum".fields.len;
+    const numTags = @typeInfo(Tag).@"enum".fields.len;
     const sentinel = std.math.maxInt(u16);
 
     pub fn format(t: Table, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -462,31 +462,31 @@ const Name = extern struct {
 /// Name.nameId types
 pub const NameId = enum(u16) {
     copyright,
-    family_name,
-    subfamily_name,
-    unique_id,
-    full_name,
+    familyName,
+    subfamilyName,
+    uniqueId,
+    fullName,
     version,
-    postscript_name,
+    postscriptName,
     trademark,
     manufacturer,
     designer,
     description,
-    vendor_url,
-    designer_url,
-    license_desc,
-    license_info_url,
+    vendorUrl,
+    designerUrl,
+    licenseDesc,
+    licenseInfoUrl,
     reserved,
-    typographic_family_name,
-    typographic_subfamily_name,
-    compatible_full,
-    sample_text,
-    post_script_cid_findfont_name,
-    wws_family_name,
-    wws_subfamily_name,
-    light_background_palette,
-    dark_background_palette,
-    variations_post_script_name_prefix,
+    typographicFamilyName,
+    typographicSubfamilyName,
+    compatibleFull,
+    sampleText,
+    postScriptCidFindfontName,
+    wwsFamilyName,
+    wwsSubfamilyName,
+    lightBackgroundPalette,
+    darkBackgroundPalette,
+    variationsPostScriptNamePrefix,
     invalid = std.math.maxInt(u16),
 };
 
@@ -555,17 +555,17 @@ pub const Box = extern struct {
 const GlyphMap = std.AutoArrayHashMapUnmanaged(u32, GlyphData);
 
 /// aka missing glyph codepoint
-pub const max_num_glyphs = 0xffff; // 65535
+pub const maxNumGlyphs = 0xffff; // 65535
 
 const VMetrics = extern struct { ascent: i16, descent: i16, lineGap: i16 };
 
 pub const Font = struct {
     data: []const u8,
-    table_locations: [Table.num_tags]u16 = [1]u16{Table.sentinel} ** Table.num_tags,
-    num_glyphs: u16,
-    index_to_loc_format: i16,
-    index_map: u32,
-    cff_data: ?*CffData,
+    tableLocations: [Table.numTags]u16 = [1]u16{Table.sentinel} ** Table.numTags,
+    numGlyphs: u16,
+    indexToLocFormat: i16,
+    indexMap: u32,
+    cffData: ?*CffData,
 
     pub const Data = struct {
         unitsPerEm: i32,
@@ -580,34 +580,34 @@ pub const Font = struct {
         }
 
         pub fn getGlyph(d: Data, codepoint: u32) GlyphData {
-            return d.glyphMap.get(codepoint) orelse d.glyphMap.get(max_num_glyphs).?;
+            return d.glyphMap.get(codepoint) orelse d.glyphMap.get(maxNumGlyphs).?;
         }
     };
 
-    pub fn init(alloc: mem.Allocator, font_data: []u8) !Font {
-        const table_directory_ptr: *TableDirectory = @ptrCast(@alignCast(font_data[0..@sizeOf(TableDirectory)]));
-        var table_directory = table_directory_ptr.*;
-        byteSwapAll(TableDirectory, &table_directory);
+    pub fn init(alloc: mem.Allocator, fontData: []u8) !Font {
+        const tableDirectoryPtr: *TableDirectory = @ptrCast(@alignCast(fontData[0..@sizeOf(TableDirectory)]));
+        var tableDirectory = tableDirectoryPtr.*;
+        byteSwapAll(TableDirectory, &tableDirectory);
         var font: Font = .{
-            .data = font_data,
-            .num_glyphs = max_num_glyphs,
-            .index_to_loc_format = 0,
-            .index_map = 0,
-            .cff_data = null,
+            .data = fontData,
+            .numGlyphs = maxNumGlyphs,
+            .indexToLocFormat = 0,
+            .indexMap = 0,
+            .cffData = null,
         };
         {
             var i: u16 = 0;
             const tables: [*]const Table = @ptrCast(@alignCast(font.data.ptr + @sizeOf(TableDirectory)));
-            while (i < table_directory.numTables) : (i += 1) {
-                const tag_bytes: [4]u8 = @bitCast(@intFromEnum(tables[i].tag));
-                std.log.info("tag {s}", .{tag_bytes});
+            while (i < tableDirectory.numTables) : (i += 1) {
+                const tagBytes: [4]u8 = @bitCast(@intFromEnum(tables[i].tag));
+                std.log.info("tag {s}", .{tagBytes});
                 const tag = std.meta.intToEnum(Table.Tag, byteSwap(@intFromEnum(tables[i].tag))) catch |e| {
-                    std.log.err("{s}. Unsupported tag '{s}'", .{ @errorName(e), tag_bytes });
+                    std.log.err("{s}. Unsupported tag '{s}'", .{ @errorName(e), tagBytes });
                     continue;
                 };
-                const tag_idx = tag.index();
-                assert(font.table_locations[tag_idx] == Table.sentinel);
-                font.table_locations[tag_idx] = i;
+                const tagIdx = tag.index();
+                assert(font.tableLocations[tagIdx] == Table.sentinel);
+                font.tableLocations[tagIdx] = i;
             }
         }
 
@@ -619,19 +619,19 @@ pub const Font = struct {
             if (!font.hasTable(.loca)) return error.NoLocaTable;
         } else {
             const cff = font.findTable(.CFF) orelse return error.NoCffTable;
-            const cff_data = try alloc.create(CffData);
-            errdefer alloc.destroy(cff_data);
-            cff_data.* = .{
+            const cffData = try alloc.create(CffData);
+            errdefer alloc.destroy(cffData);
+            cffData.* = .{
                 .fontdicts = .zero,
                 .fdselect = .zero,
                 .charstrings = .zero,
                 .gsubrs = .zero,
                 .subrs = .zero,
                 // TODO this should use size from table (not 512MB)
-                .cff = Buf.init(font_data.ptr + cff.offset, 512 * 1024 * 1024),
+                .cff = Buf.init(fontData.ptr + cff.offset, 512 * 1024 * 1024),
             };
 
-            var b = cff_data.cff;
+            var b = cffData.cff;
             // read the header
             b.skip(2);
             b.seek(b.get8());
@@ -640,7 +640,7 @@ pub const Font = struct {
             var topdictidx = b.cffGetIndex();
             var topdict = topdictidx.cffIndexGet(0);
             _ = b.cffGetIndex(); // string INDEX
-            cff_data.gsubrs = b.cffGetIndex();
+            cffData.gsubrs = b.cffGetIndex();
 
             var cstype: u32 = 2;
             var charstrings: u32 = 0;
@@ -651,7 +651,7 @@ pub const Font = struct {
             topdict.dictGetInts(0x100 | 6, 1, @ptrCast(&cstype));
             topdict.dictGetInts(0x100 | 36, 1, @ptrCast(&fdarrayoff));
             topdict.dictGetInts(0x100 | 37, 1, @ptrCast(&fdselectoff));
-            cff_data.subrs = b.getSubrs(topdict);
+            cffData.subrs = b.getSubrs(topdict);
 
             // we only support Type 2 charstrings
             if (cstype != 2) return error.CsType;
@@ -661,18 +661,18 @@ pub const Font = struct {
                 // looks like a CID font
                 if (fdselectoff == 0) return error.FdSelectOff;
                 b.seek(fdarrayoff);
-                cff_data.fontdicts = b.cffGetIndex();
-                cff_data.fdselect = b.range(fdselectoff, b.size - fdselectoff);
+                cffData.fontdicts = b.cffGetIndex();
+                cffData.fdselect = b.range(fdselectoff, b.size - fdselectoff);
             }
 
             b.seek(charstrings);
-            cff_data.charstrings = b.cffGetIndex();
-            font.cff_data = cff_data;
+            cffData.charstrings = b.cffGetIndex();
+            font.cffData = cffData;
         }
 
-        if (font.getTypedTable(.maxp)) |maxp| font.num_glyphs = maxp.numGlyphs;
+        if (font.getTypedTable(.maxp)) |maxp| font.numGlyphs = maxp.numGlyphs;
         const head = font.getTypedTable(.head).?;
-        font.index_to_loc_format = head.indexToLocFormat;
+        font.indexToLocFormat = head.indexToLocFormat;
 
         const cmapTable = font.findTable(.cmap).?;
         const cmap = font.getTypedTable(.cmap).?;
@@ -689,19 +689,19 @@ pub const Font = struct {
                         return error.InvalidMicrosoftEncoding;
                     switch (eid) {
                         .unicode_bmp, .unicode_full => {
-                            font.index_map = cmapTable.offset + encoding.subtableOffset;
+                            font.indexMap = cmapTable.offset + encoding.subtableOffset;
                         },
                         else => {},
                     }
                 },
                 .unicode => {
-                    font.index_map = cmapTable.offset + encoding.subtableOffset;
+                    font.indexMap = cmapTable.offset + encoding.subtableOffset;
                 },
                 else => {},
             }
         }
 
-        if (font.index_map == 0) {
+        if (font.indexMap == 0) {
             std.log.err("Font does not contain supported character map type (TODO)", .{});
             return error.CmapType;
         }
@@ -710,22 +710,22 @@ pub const Font = struct {
     }
 
     pub fn deinit(font: *Font, alloc: mem.Allocator) void {
-        if (font.cff_data) |cff| alloc.destroy(cff);
+        if (font.cffData) |cff| alloc.destroy(cff);
     }
 
     pub fn parse(font: *Font, alloc: mem.Allocator) !Data {
         const head = font.getTypedTable(.head).?;
         std.log.info("head {}", .{head});
         const unitsPerEm = head.unitsPerEm;
-        std.log.info("unitsPerEm {} numGlyphs {}", .{ unitsPerEm, font.num_glyphs });
+        std.log.info("unitsPerEm {} numGlyphs {}", .{ unitsPerEm, font.numGlyphs });
 
         var glyphMap = try font.createGlyphMap(alloc);
         errdefer Data.deinitGlyphMap(&glyphMap, alloc);
         std.log.info("glyph count {}", .{glyphMap.count()});
 
         try font.readAllGlyphs(alloc, &glyphMap);
-        try font.applyLayoutInfo(alloc, font.num_glyphs, &glyphMap);
-        assert(glyphMap.contains(max_num_glyphs));
+        try font.applyLayoutInfo(alloc, font.numGlyphs, &glyphMap);
+        assert(glyphMap.contains(maxNumGlyphs));
         return .{
             .unitsPerEm = unitsPerEm,
             .glyphMap = glyphMap,
@@ -737,15 +737,15 @@ pub const Font = struct {
     }
 
     fn findTable(font: Font, tag: Table.Tag) ?Table {
-        const table_index = font.table_locations[tag.index()];
-        if (table_index == Table.sentinel) return null;
-        var t = font.getTables()[table_index];
+        const tableIndex = font.tableLocations[tag.index()];
+        if (tableIndex == Table.sentinel) return null;
+        var t = font.getTables()[tableIndex];
         byteSwapAll(Table, &t);
         return t;
     }
 
     fn hasTable(font: Font, tag: Table.Tag) bool {
-        return font.table_locations[tag.index()] != Table.sentinel;
+        return font.tableLocations[tag.index()] != Table.sentinel;
     }
 
     fn TagTable(comptime tag: Table.Tag) type {
@@ -780,12 +780,12 @@ pub const Font = struct {
     }
 
     fn getGlyphLocation(font: Font, glyphIndex: u32) !u32 {
-        if (glyphIndex >= font.num_glyphs) return error.NoGlyph;
-        if (font.index_to_loc_format >= 2) return error.NoGlyph;
+        if (glyphIndex >= font.numGlyphs) return error.NoGlyph;
+        if (font.indexToLocFormat >= 2) return error.NoGlyph;
         const glyf = font.findTable(.glyf).?;
         const loca = font.findTable(.loca).?;
 
-        const bytesPerLoc: u8 = if (font.index_to_loc_format == 0) 2 else 4;
+        const bytesPerLoc: u8 = if (font.indexToLocFormat == 0) 2 else 4;
         const isTwoByteEntry = bytesPerLoc == 2;
 
         const offset = loca.offset + glyphIndex * bytesPerLoc;
@@ -801,7 +801,7 @@ pub const Font = struct {
 
     /// Create a lookup from unicode to font's internal glyph index
     fn createGlyphMap(font: Font, alloc: mem.Allocator) !GlyphMap {
-        const format = font.readInt(u16, font.index_map);
+        const format = font.readInt(u16, font.indexMap);
         var missingGlyphCharCode: ?u32 = null;
 
         if (!(format == 12 or format == 13 or format == 4)) {
@@ -813,7 +813,7 @@ pub const Font = struct {
         var map = GlyphMap{};
 
         if (format == 4) {
-            const tblp = font.getPtrAt(font.index_map, *const SegmentToDelta);
+            const tblp = font.getPtrAt(font.indexMap, *const SegmentToDelta);
             var tbl = tblp.*;
             byteSwapAll(SegmentToDelta, &tbl);
             std.log.debug("tbl {}", .{tbl});
@@ -822,12 +822,12 @@ pub const Font = struct {
             const segCount = tbl.segCountX2 / 2;
             comptime assert(@sizeOf(SegmentToDelta) == 14);
             comptime assert(@sizeOf(SegmentToDelta) == @bitSizeOf(SegmentToDelta) / 8);
-            const ptr = font.data.ptr + font.index_map + @sizeOf(SegmentToDelta);
+            const ptr = font.data.ptr + font.indexMap + @sizeOf(SegmentToDelta);
             const endCodes: [*]const u16 = @ptrCast(@alignCast(ptr));
-            assert(endCodes[segCount - 1] == max_num_glyphs);
+            assert(endCodes[segCount - 1] == maxNumGlyphs);
             assert(endCodes[segCount] == 0); // reservedPad should == 0
             const startCodes: [*]const u16 = endCodes + segCount + 1; // +1 to skip reservedPad
-            assert(startCodes[segCount - 1] == max_num_glyphs);
+            assert(startCodes[segCount - 1] == maxNumGlyphs);
             const idDeltas: [*]const i16 = @ptrCast(startCodes + segCount);
             const idRangeOffsets: [*]const u16 = @ptrCast(idDeltas + segCount);
 
@@ -836,7 +836,7 @@ pub const Font = struct {
                 const startCode = byteSwap(startCodes[i]);
                 var charCode = startCode;
 
-                if (charCode == max_num_glyphs) break; // not sure about this (hack to avoid out of bounds on a specific font)
+                if (charCode == maxNumGlyphs) break; // not sure about this (hack to avoid out of bounds on a specific font)
 
                 while (charCode <= endCode) {
                     var glyphIndex: u32 = 0;
@@ -848,9 +848,9 @@ pub const Font = struct {
                         const glyphId = @as(i32, charCode) + idDelta;
                         // debug("glyphId {}\n", .{glyphId});
                         glyphIndex = @as(u32, @bitCast(if (glyphId < 0)
-                            glyphId + max_num_glyphs
+                            glyphId + maxNumGlyphs
                         else
-                            glyphId)) & max_num_glyphs;
+                            glyphId)) & maxNumGlyphs;
                     }
                     // Otherwise, glyph index needs to be looked up from an array
                     else {
@@ -867,12 +867,12 @@ pub const Font = struct {
                 }
             }
         } else if (format == 12 or format == 13) {
-            const tblp = font.getPtrAt(font.index_map, *align(1) const FmtSegmentedTable);
+            const tblp = font.getPtrAt(font.indexMap, *align(1) const FmtSegmentedTable);
             var tbl = tblp.*;
             byteSwapAll(FmtSegmentedTable, &tbl);
             std.log.debug("tbl {}", .{tbl});
             assert(tbl.format == format);
-            const ptr = font.data.ptr + font.index_map + @sizeOf(FmtSegmentedTable);
+            const ptr = font.data.ptr + font.indexMap + @sizeOf(FmtSegmentedTable);
             const mapGroups: [*]align(1) const SequentialMapGroup = @ptrCast(@alignCast(ptr));
             for (0..tbl.numGroups) |i| {
                 const mapGroup = mapGroups[i];
@@ -901,28 +901,28 @@ pub const Font = struct {
             return error.UnsupportedFormat;
         }
 
-        // ensure the map has an entry at max_num_glyphs
+        // ensure the map has an entry at maxNumGlyphs
         if (missingGlyphCharCode) |cp| {
-            if (!map.contains(max_num_glyphs)) {
-                try map.putNoClobber(alloc, max_num_glyphs, map.get(cp).?);
+            if (!map.contains(maxNumGlyphs)) {
+                try map.putNoClobber(alloc, maxNumGlyphs, map.get(cp).?);
             }
         } else {
             var glyph: GlyphData = .zero;
             glyph.glyphIndex = 0;
-            try map.putNoClobber(alloc, max_num_glyphs, glyph);
+            try map.putNoClobber(alloc, maxNumGlyphs, glyph);
         }
-        assert(map.contains(max_num_glyphs));
+        assert(map.contains(maxNumGlyphs));
 
         return map;
     }
 
     pub fn findGlyphIndex(font: Font, codepoint: u32) !u32 {
-        const format = font.readInt(u16, font.index_map);
+        const format = font.readInt(u16, font.indexMap);
         std.log.debug("findGlyphIndex format {} codepoint {}/'{u}'", .{ format, codepoint, @as(u21, @intCast(codepoint)) });
         switch (format) {
             4 => {
-                if (codepoint > max_num_glyphs) return 0;
-                const tblp = font.getPtrAt(font.index_map, *const SegmentToDelta);
+                if (codepoint > maxNumGlyphs) return 0;
+                const tblp = font.getPtrAt(font.indexMap, *const SegmentToDelta);
                 var tbl = tblp.*;
                 byteSwapAll(SegmentToDelta, &tbl);
                 std.log.debug("tbl {}", .{tbl});
@@ -932,7 +932,7 @@ pub const Font = struct {
                 var searchRange = tbl.searchRange >> 1;
                 var entrySelector = tbl.entrySelector;
                 const rangeShift = tbl.rangeShift >> 1;
-                const endCount = font.index_map + 14;
+                const endCount = font.indexMap + 14;
                 var search = endCount;
 
                 // they lie from endCount .. endCount + segCount
@@ -951,12 +951,12 @@ pub const Font = struct {
                 search += 2;
                 const i: u16 = @truncate((search - endCount) >> 1);
                 std.log.debug("search {} endCount {} i {}", .{ search, endCount, i });
-                const ptr = font.data.ptr + font.index_map + @sizeOf(SegmentToDelta);
+                const ptr = font.data.ptr + font.indexMap + @sizeOf(SegmentToDelta);
                 const endCodes: [*]const u16 = @ptrCast(@alignCast(ptr));
-                assert(endCodes[segCount - 1] == max_num_glyphs);
+                assert(endCodes[segCount - 1] == maxNumGlyphs);
                 assert(endCodes[segCount] == 0); // reservedPad should == 0
                 const startCodes: [*]const u16 = endCodes + segCount + 1; // +1 to skip reservedPad
-                assert(startCodes[segCount - 1] == max_num_glyphs);
+                assert(startCodes[segCount - 1] == maxNumGlyphs);
                 const idDeltas: [*]const i16 = @ptrCast(startCodes + segCount);
                 const idRangeOffsets: [*]const u16 = @ptrCast(idDeltas + segCount);
 
@@ -970,9 +970,9 @@ pub const Font = struct {
                     const idDelta = byteSwap(idDeltas[i]);
                     const glyphId = @as(i32, @bitCast(codepoint)) + idDelta;
                     return @as(u32, @bitCast(if (glyphId < 0)
-                        glyphId + max_num_glyphs
+                        glyphId + maxNumGlyphs
                     else
-                        glyphId)) & max_num_glyphs;
+                        glyphId)) & maxNumGlyphs;
                 } else {
                     // Otherwise, glyph index needs to be looked up from an array
                     // glyphId = *(idRangeOffset[i]/2 + (c - startCode[i]) + &idRangeOffset[i])
@@ -981,9 +981,9 @@ pub const Font = struct {
                 }
             },
             12, 13 => {
-                const numGroups = font.readInt(u32, font.index_map + @offsetOf(FmtSegmentedTable, "numGroups"));
+                const numGroups = font.readInt(u32, font.indexMap + @offsetOf(FmtSegmentedTable, "numGroups"));
                 std.log.info("numGroups {}", .{numGroups});
-                const groups = font.getPtrAt(font.index_map + @sizeOf(FmtSegmentedTable), [*]align(1) const SequentialMapGroup);
+                const groups = font.getPtrAt(font.indexMap + @sizeOf(FmtSegmentedTable), [*]align(1) const SequentialMapGroup);
                 // Binary search the right group.
                 var low: u32 = 0;
                 var high = numGroups;
@@ -997,11 +997,11 @@ pub const Font = struct {
                     else if (codepoint > endCode)
                         low = mid + 1
                     else {
-                        const start_glyph = byteSwap(groups[mid].startGlyphID);
+                        const startGlyph = byteSwap(groups[mid].startGlyphID);
                         return if (format == 12)
-                            start_glyph + codepoint - startCode
+                            startGlyph + codepoint - startCode
                         else // format == 13
-                            start_glyph;
+                            startGlyph;
                     }
                 }
                 return 0;
@@ -1043,7 +1043,7 @@ pub const Font = struct {
         glyphIndex: u32,
         glyphMap: *GlyphMap,
     ) ReadGlyphError!GlyphData {
-        return if (font.cff_data == null)
+        return if (font.cffData == null)
             font.readGlyphTT(alloc, glyphIndex, glyphMap)
             // else if (use_c)
             //     font.readGlyphT2Old(alloc, glyphIndex)
@@ -1254,7 +1254,7 @@ pub const Font = struct {
                 // python fonttools
                 // https://github.com/fonttools/fonttools/blob/682d72ab6a12bbdd04b2c37fbacef83501327054/Lib/fontTools/ttLib/tables/_g_l_y_f.py#L1213
 
-                const parent_index, const child_index = if (flags.arg_1_and_2_are_words) .{
+                const parentIndex, const childIndex = if (flags.arg_1_and_2_are_words) .{
                     try reader.readInt(u16, .big),
                     try reader.readInt(u16, .big),
                 } else .{
@@ -1264,8 +1264,8 @@ pub const Font = struct {
                 // for (glyphMap.values(), 0..) |v, i|
                 //     std.log.debug("map[{}] glyphIndex {} codepoint {u}:{}", .{ i, v.glyphIndex, @as(u21, @intCast(v.unicodeValue)), v.unicodeValue });
                 std.log.info(
-                    "parent_index {} child_index {} glyphIndex {} childGlyphIndex {} points {}",
-                    .{ parent_index, child_index, glyphIndex, childGlyphIndex, points.items.len },
+                    "parentIndex {} childIndex {} glyphIndex {} childGlyphIndex {} points {}",
+                    .{ parentIndex, childIndex, glyphIndex, childGlyphIndex, points.items.len },
                 );
 
                 // match l-th (child) point of the newly loaded component to the k-th (parent) point
@@ -1423,34 +1423,34 @@ pub const Font = struct {
         return height / fheight;
     }
 
-    pub fn codepointBitmapBoxSubpixel(font: *Font, codepoint: u32, scale_xy: [2]f32, shift_xy: [2]f32) !Box {
+    pub fn codepointBitmapBoxSubpixel(font: *Font, codepoint: u32, scaleXy: [2]f32, shiftXy: [2]f32) !Box {
         const glyphIndex = try font.findGlyphIndex(codepoint);
         std.log.info("glyphIndex {}", .{glyphIndex});
-        return font.glyphBitmapBoxSubpixel(glyphIndex, scale_xy, shift_xy);
+        return font.glyphBitmapBoxSubpixel(glyphIndex, scaleXy, shiftXy);
     }
-    pub fn glyphBitmapBoxSubpixel(font: *Font, glyphIndex: u32, scale_xy: [2]f32, shift_xy: [2]f32) Box {
+    pub fn glyphBitmapBoxSubpixel(font: *Font, glyphIndex: u32, scaleXy: [2]f32, shiftXy: [2]f32) Box {
         return if (font.glyphBox(glyphIndex, null)) |box| .{
-            .x0 = @intFromFloat(std.math.floor(@as(f32, @floatFromInt(box.x0)) * scale_xy[0] + shift_xy[0])),
-            .y0 = @intFromFloat(std.math.floor(@as(f32, @floatFromInt(-box.y1)) * scale_xy[1] + shift_xy[1])),
-            .x1 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(box.x1)) * scale_xy[0] + shift_xy[0])),
-            .y1 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(-box.y0)) * scale_xy[1] + shift_xy[1])),
+            .x0 = @intFromFloat(std.math.floor(@as(f32, @floatFromInt(box.x0)) * scaleXy[0] + shiftXy[0])),
+            .y0 = @intFromFloat(std.math.floor(@as(f32, @floatFromInt(-box.y1)) * scaleXy[1] + shiftXy[1])),
+            .x1 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(box.x1)) * scaleXy[0] + shiftXy[0])),
+            .y1 = @intFromFloat(std.math.ceil(@as(f32, @floatFromInt(-box.y0)) * scaleXy[1] + shiftXy[1])),
         }
         // e.g. space character
         else Box.zero;
     }
 
-    pub fn glyphBox(font: *Font, glyphIndex: u32, out_num_vertices: ?*u32) ?Box {
-        if (font.cff_data != null) {
-            return t2.glyphInfo(font, glyphIndex, out_num_vertices);
+    pub fn glyphBox(font: *Font, glyphIndex: u32, outNumVertices: ?*u32) ?Box {
+        if (font.cffData != null) {
+            return t2.glyphInfo(font, glyphIndex, outNumVertices);
         } else {
             const g = font.getGlyphLocation(glyphIndex) catch |e| {
                 std.log.err("{s}", .{@errorName(e)});
-                if (out_num_vertices) |n| n.* = 0;
+                if (outNumVertices) |n| n.* = 0;
                 return null;
             };
             std.log.info("glyphBox() g {}", .{g});
 
-            if (out_num_vertices) |n| n.* = 1;
+            if (outNumVertices) |n| n.* = 1;
 
             return .{
                 .x0 = font.readInt(i16, g + 2),
@@ -1475,9 +1475,9 @@ pub const Font = struct {
             var name = names[i];
             byteSwapAll(Name, &name);
             // debug("name {}\n", .{name});
-            const name_id = std.meta.intToEnum(NameId, name.nameID) catch .invalid;
+            const nameId = std.meta.intToEnum(NameId, name.nameID) catch .invalid;
             const s = font.data[tbl.offset + offset + name.stringOffset ..][0..name.length];
-            debug("{}:{s}: {s}\n", .{ name.nameID, @tagName(name_id), s });
+            debug("{}:{s}: {s}\n", .{ name.nameID, @tagName(nameId), s });
         }
     }
 
@@ -1489,8 +1489,8 @@ pub const Font = struct {
         for (0..count) |i| {
             var name = names[i];
             byteSwapAll(Name, &name);
-            const name_id = std.meta.intToEnum(NameId, name.nameID) catch .invalid;
-            if (name_id == nameId) {
+
+            if (nameId == std.meta.intToEnum(NameId, name.nameID) catch .invalid) {
                 return font.data[tbl.offset + offset + name.stringOffset ..][0..name.length];
             }
         }

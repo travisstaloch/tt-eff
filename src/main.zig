@@ -28,7 +28,7 @@ pub fn main() !void {
         return error.NoMissingGlyph;
     }
     // try font.readNameTable();
-    std.debug.print("{?s}-{?s}\n", .{ font.getName(.unique_id), font.getName(.subfamily_name) });
+    std.debug.print("{?s}-{?s}\n", .{ font.getName(.uniqueId), font.getName(.subfamilyName) });
 
     const scale = font.scaleForPixelHeight(40);
     const x_shift = 0;

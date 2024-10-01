@@ -101,7 +101,7 @@ pub const Buf = extern struct {
             b.get32()
         else
             unreachable;
-        debugCharstring("cff_int() b0 {} r {}\n", .{ b0, r });
+        debugCharstring("cffInt() b0 {} r {}\n", .{ b0, r });
         return r;
     }
 
@@ -142,20 +142,20 @@ pub const Buf = extern struct {
     }
 
     pub fn getSubrs(_cff: Buf, _fontdict: Buf) Buf {
-        var private_loc: [2]u32 = .{ 0, 0 };
+        var privateLoc: [2]u32 = .{ 0, 0 };
         var fontdict = _fontdict;
-        fontdict.dictGetInts(18, 2, &private_loc);
-        if (private_loc[1] == 0 or private_loc[0] == 0) return .zero;
+        fontdict.dictGetInts(18, 2, &privateLoc);
+        if (privateLoc[1] == 0 or privateLoc[0] == 0) return .zero;
         var cff = _cff;
-        var pdict = cff.range(private_loc[1], private_loc[0]);
+        var pdict = cff.range(privateLoc[1], privateLoc[0]);
         var subrsoff: u32 = 0;
         pdict.dictGetInts(19, 1, @ptrCast(&subrsoff));
         if (subrsoff == 0) return .zero;
-        cff.seek(private_loc[1] + subrsoff);
+        cff.seek(privateLoc[1] + subrsoff);
         return cff.cffGetIndex();
     }
 
-    fn get_subr(_idx: Buf, _n: u32) Buf {
+    fn getSubr(_idx: Buf, _n: u32) Buf {
         var idx = _idx;
         var n = _n;
         const count = idx.cffIndexCount();
@@ -196,13 +196,13 @@ pub const CharstringCtx = struct {
 
     const Options = union(enum) {
         /// calculate glyph bounds and count numPoints. don't allocate any points
-        bounds_only,
+        boundsOnly,
         /// allocate points and count numPoints. don't calculate glyph bounds.
-        allocate_points: mem.Allocator,
+        allocatePoints: mem.Allocator,
     };
 
-    /// options.bounds_only:     calculate glyph bounds and count numPoints
-    /// options.allocate_points: allocate points and count numPoints
+    /// options.boundsOnly:     calculate glyph bounds and count numPoints
+    /// options.allocatePoints: allocate points and count numPoints
     pub fn init(options: Options) CharstringCtx {
         return .{
             .started = false,
@@ -230,9 +230,9 @@ pub const CharstringCtx = struct {
     fn closeShape(ctx: *CharstringCtx) !void {
         if (ctx.first.x != ctx.xy.x or ctx.first.y != ctx.xy.y)
             try ctx.v(.vline, @intFromFloat(ctx.first.x), @intFromFloat(ctx.first.y), 0, 0, 0, 0);
-        if (ctx.options == .allocate_points) {
+        if (ctx.options == .allocatePoints) {
             if (ctx.points.items.len != 0)
-                try ctx.contourEndIndices.append(ctx.options.allocate_points, @intCast(ctx.points.items.len));
+                try ctx.contourEndIndices.append(ctx.options.allocatePoints, @intCast(ctx.points.items.len));
         }
     }
 
@@ -267,7 +267,7 @@ pub const CharstringCtx = struct {
         );
     }
     fn v(ctx: *CharstringCtx, ty: VMove, x: i32, y: i32, cx: i32, cy: i32, cx1: i32, cy1: i32) !void {
-        if (ctx.options == .bounds_only) {
+        if (ctx.options == .boundsOnly) {
             trackVertex(ctx, x, y);
             if (ty == .vcubic) {
                 trackVertex(ctx, cx, cy);
@@ -276,12 +276,12 @@ pub const CharstringCtx = struct {
         } else {
             // FIXME not sure this is 100% correct
             if (ty == .vcurve or ty == .vcubic) {
-                try ctx.points.append(ctx.options.allocate_points, .{ .xy = .init(cx, cy), .onCurve = false });
+                try ctx.points.append(ctx.options.allocatePoints, .{ .xy = .init(cx, cy), .onCurve = false });
             }
             if (ty == .vcubic) {
-                try ctx.points.append(ctx.options.allocate_points, .{ .xy = .init(cx1, cy1), .onCurve = false });
+                try ctx.points.append(ctx.options.allocatePoints, .{ .xy = .init(cx1, cy1), .onCurve = false });
             }
-            try ctx.points.append(ctx.options.allocate_points, .{ .xy = .init(x, y), .onCurve = true });
+            try ctx.points.append(ctx.options.allocatePoints, .{ .xy = .init(x, y), .onCurve = true });
         }
         ctx.numPoints += 1;
     }
@@ -329,9 +329,10 @@ const Instruction = enum(u8) {
     hhcurveto = 0x1B,
     callsubr = 0x0A,
     callgsubr = 0x1D,
-    @"return" = 0x0B,
+    /// return
+    ret = 0x0B,
     endchar = 0x0E,
-    two_byte_escape = 0x0C,
+    twoByteEscape = 0x0C,
     hflex = 0x22,
     flex = 0x23,
     hflex1 = 0x24,
@@ -346,19 +347,19 @@ fn runCharstring(font: *Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
     debugCharstring("runCharstring() glyphIndex {}\n", .{glyphIndex});
 
     var maskbits: u32 = 0;
-    var in_header = true;
-    var has_subrs = false;
-    var clear_stack = false;
+    var inHeader = true;
+    var hasSubrs = false;
+    var clearStack = false;
     var s = [1]f32{0} ** 48; // stack
     var sp: u32 = 0; // stack pointer
     var subr_stack = std.BoundedArray(Buf, 10).init(0) catch unreachable;
-    var subrs = font.cff_data.?.subrs;
+    var subrs = font.cffData.?.subrs;
     // this currently ignores the initial width value, which isn't needed if we have hmtx
-    var b = font.cff_data.?.charstrings.cffIndexGet(glyphIndex);
+    var b = font.cffData.?.charstrings.cffIndexGet(glyphIndex);
 
     while (b.cursor < b.size) {
         var i: u32 = 0;
-        clear_stack = true;
+        clearStack = true;
         const b0: u16 = b.get8();
         debugCharstring("{}/{} b0 {}/0x{x} numPoints {}\n", .{ b.cursor, b.size, b0, b0, ctx.numPoints });
 
@@ -367,8 +368,8 @@ fn runCharstring(font: *Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
             Instruction.hintmask.int(), // 0x13
             Instruction.cntrmask.int(), // 0x14
             => {
-                if (in_header) maskbits += (sp / 2); // implicit "vstem"
-                in_header = false;
+                if (inHeader) maskbits += (sp / 2); // implicit "vstem"
+                inHeader = false;
                 b.skip((maskbits + 7) / 8);
             },
             Instruction.hstem.int(), // 0x01
@@ -379,17 +380,17 @@ fn runCharstring(font: *Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
                 maskbits += (sp / 2);
             },
             Instruction.rmoveto.int() => { // 0x15
-                in_header = false;
+                inHeader = false;
                 if (sp < 2) return charstringErr("rmoveto stack");
                 try ctx.rmoveTo(s[sp - 2], s[sp - 1]);
             },
             Instruction.vmoveto.int() => { // 0x04
-                in_header = false;
+                inHeader = false;
                 if (sp < 1) return charstringErr("vmoveto stack");
                 try ctx.rmoveTo(0, s[sp - 1]);
             },
             Instruction.hmoveto.int() => { // 0x16
-                in_header = false;
+                inHeader = false;
                 if (sp < 1) return charstringErr("hmoveto stack");
                 try ctx.rmoveTo(s[sp - 1], 0);
             },
@@ -485,10 +486,10 @@ fn runCharstring(font: *Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
                 }
             },
             Instruction.callsubr.int() => { // 0x0A
-                if (!has_subrs) {
-                    if (font.cff_data.?.fdselect.size != 0)
+                if (!hasSubrs) {
+                    if (font.cffData.?.fdselect.size != 0)
                         subrs = getGlyphSubrs(font, glyphIndex);
-                    has_subrs = true;
+                    hasSubrs = true;
                 }
                 continue :sw Instruction.callgsubr.int();
                 // FALLTHROUGH
@@ -502,21 +503,21 @@ fn runCharstring(font: *Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
                 b = (if (b0 == Instruction.callsubr.int()) // 0x0A
                     subrs
                 else
-                    font.cff_data.?.gsubrs).get_subr(@bitCast(v));
+                    font.cffData.?.gsubrs).getSubr(@bitCast(v));
                 if (b.size == 0) return charstringErr("subr not found");
                 b.cursor = 0;
-                clear_stack = false;
+                clearStack = false;
             },
-            Instruction.@"return".int() => { // 0x0B
+            Instruction.ret.int() => { // 0x0B
                 if (subr_stack.len == 0) return charstringErr("return outside subr");
                 b = subr_stack.pop();
-                clear_stack = false;
+                clearStack = false;
             },
             Instruction.endchar.int() => { // 0x0E
                 try ctx.closeShape();
                 return;
             },
-            Instruction.two_byte_escape.int() => { // 0x0C
+            Instruction.twoByteEscape.int() => { // 0x0C
                 const b1 = b.get8();
                 switch (b1) {
                     // @TODO These "flex" implementations ignore the flex-depth and resolution,
@@ -611,22 +612,18 @@ fn runCharstring(font: *Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
                 if (sp >= 48) return charstringErr("push stack overflow");
                 s[sp] = f;
                 sp += 1;
-                clear_stack = false;
+                clearStack = false;
             },
         }
-        if (clear_stack) sp = 0;
+        if (clearStack) sp = 0;
     }
     return charstringErr("no endchar");
 }
 
 fn getGlyphSubrs(info: *const Font, glyphIndex: u32) Buf {
-    var fdselector: i32 = -1;
-    var nranges: i32 = 0;
-    var start: i32 = 0;
-    var end: i32 = 0;
-    var v: i32 = 0;
-    var fdselect: Buf = @bitCast(info.cff_data.?.fdselect);
-    @import("std").debug.print("cid_get_glyph_subrs fdselect {}\n", .{fdselect});
+    var fdselector: u32 = std.math.maxInt(u32);
+    var fdselect = info.cffData.?.fdselect;
+    // debugCharstring("getGlyphSubrs fdselect {}\n", .{fdselect});
     fdselect.seek(0);
 
     const fmt = fdselect.get8();
@@ -635,11 +632,11 @@ fn getGlyphSubrs(info: *const Font, glyphIndex: u32) Buf {
         fdselect.skip(glyphIndex);
         fdselector = fdselect.get8();
     } else if (fmt == 3) {
-        nranges = fdselect.get16();
-        start = fdselect.get16();
-        for (0..@intCast(nranges)) |_| {
-            v = fdselect.get8();
-            end = fdselect.get16();
+        const nranges = fdselect.get16();
+        var start = fdselect.get16();
+        for (0..nranges) |_| {
+            const v = fdselect.get8();
+            const end = fdselect.get16();
             if (glyphIndex >= start and glyphIndex < end) {
                 fdselector = v;
                 break;
@@ -649,40 +646,42 @@ fn getGlyphSubrs(info: *const Font, glyphIndex: u32) Buf {
     }
     // what was this line? it does nothing. why was it in the original c code?
     // if (fdselector == -1) new_buf(NULL, 0);
-    var cff: Buf = info.cff_data.?.cff;
-    var fontdicts: Buf = @bitCast(info.cff_data.?.fontdicts);
-
-    return @bitCast(cff.getSubrs(fontdicts.cffIndexGet(@intCast(fdselector))));
+    return info.cffData.?.cff.getSubrs(
+        info.cffData.?.fontdicts.cffIndexGet(fdselector),
+    );
 }
 
 pub fn readGlyph(font: *Font, alloc: mem.Allocator, glyphIndex: u32) !ttf.GlyphData {
-    var count_ctx = CharstringCtx.init(.bounds_only);
-    var output_ctx = CharstringCtx.init(.{ .allocate_points = alloc });
-    defer output_ctx.deinit(alloc);
+    var countCtx = CharstringCtx.init(.boundsOnly);
+    var outputCtx = CharstringCtx.init(.{ .allocatePoints = alloc });
+    defer outputCtx.deinit(alloc);
     // run charstring to get numPoints so that we can allocate them all at once
-    try runCharstring(font, glyphIndex, &count_ctx);
-    try output_ctx.points.ensureTotalCapacity(alloc, output_ctx.numPoints);
-    try runCharstring(font, glyphIndex, &output_ctx);
-    assert(output_ctx.numPoints == count_ctx.numPoints);
-    std.log.debug("first {d:.1} xy {d:.1} min {d:.1} max {d:.1}", .{ count_ctx.first, count_ctx.xy, count_ctx.min, count_ctx.max });
+    try runCharstring(font, glyphIndex, &countCtx);
+    try outputCtx.points.ensureTotalCapacity(alloc, outputCtx.numPoints);
+    try runCharstring(font, glyphIndex, &outputCtx);
+    assert(outputCtx.numPoints == countCtx.numPoints);
+    std.log.debug(
+        "first {d:.1} xy {d:.1} min {d:.1} max {d:.1}",
+        .{ countCtx.first, countCtx.xy, countCtx.min, countCtx.max },
+    );
 
     return .{
         .glyphIndex = glyphIndex,
-        .points = try output_ctx.points.toOwnedSlice(alloc),
-        .contourEndIndices = try output_ctx.contourEndIndices.toOwnedSlice(alloc),
-        .min = count_ctx.min,
-        .max = count_ctx.max,
+        .points = try outputCtx.points.toOwnedSlice(alloc),
+        .contourEndIndices = try outputCtx.contourEndIndices.toOwnedSlice(alloc),
+        .min = countCtx.min,
+        .max = countCtx.max,
         .advanceWidth = undefined,
         .leftSideBearing = undefined,
         .unicodeValue = undefined,
     };
 }
 
-pub fn glyphInfo(font: *Font, glyphIndex: u32, out_num_vertices: ?*u32) ?ttf.Box {
-    var ctx = CharstringCtx.init(.bounds_only);
+pub fn glyphInfo(font: *Font, glyphIndex: u32, outNumVertices: ?*u32) ?ttf.Box {
+    var ctx = CharstringCtx.init(.boundsOnly);
     const ok = if (runCharstring(font, glyphIndex, &ctx)) |_| true else |_| false;
 
-    if (out_num_vertices != null and ok) out_num_vertices.?.* = ctx.numPoints;
+    if (outNumVertices != null and ok) outNumVertices.?.* = ctx.numPoints;
     return .{
         .x0 = if (ok) ctx.min.x else 0,
         .y0 = if (ok) ctx.min.y else 0,

@@ -3,8 +3,8 @@
 uniquePrintableCharacters: []GlyphData,
 printableCharacters: []PrintableCharacter,
 
-const space_size_em = 0.333;
-const line_height_em = 1.3;
+const spaceSizeEm = 0.333;
+const lineHeightEm = 1.3;
 
 pub fn init(alloc: std.mem.Allocator, text: []const u8, fontData: FontData) !TextData {
     var uniqueCharsList = std.ArrayList(GlyphData).init(alloc);
@@ -28,11 +28,11 @@ pub fn init(alloc: std.mem.Allocator, text: []const u8, fontData: FontData) !Tex
 
     for (0..text.len) |i| {
         if (text[i] == ' ') {
-            wordAdvance += space_size_em;
+            wordAdvance += spaceSizeEm;
         } else if (text[i] == '\t') {
-            wordAdvance += space_size_em * 4; // TODO: proper tab implementation
+            wordAdvance += spaceSizeEm * 4; // TODO: proper tab implementation
         } else if (text[i] == '\n') {
-            lineAdvance += line_height_em;
+            lineAdvance += lineHeightEm;
             wordAdvance = 0;
             letterAdvance = 0;
         } else if (!std.ascii.isControl(text[i])) {
@@ -72,7 +72,14 @@ pub const PrintableCharacter = struct {
     offsetX: f32,
     offsetY: f32,
 
-    pub fn init(uniqueGlyphIndex: u32, letterAdvance: f32, wordAdvance: f32, lineAdvance: f32, offsetX: f32, offsetY: f32) PrintableCharacter {
+    pub fn init(
+        uniqueGlyphIndex: u32,
+        letterAdvance: f32,
+        wordAdvance: f32,
+        lineAdvance: f32,
+        offsetX: f32,
+        offsetY: f32,
+    ) PrintableCharacter {
         return .{
             .uniqueGlyphIndex = uniqueGlyphIndex,
             .letterAdvance = letterAdvance,
@@ -83,8 +90,15 @@ pub const PrintableCharacter = struct {
         };
     }
 
-    pub fn getAdvanceX(pc: PrintableCharacter, fontSize: f32, letterSpacing: f32, wordSpacing: f32) f32 {
-        return (pc.letterAdvance * letterSpacing + pc.wordAdvance * wordSpacing + pc.offsetX) * fontSize;
+    pub fn getAdvanceX(
+        pc: PrintableCharacter,
+        fontSize: f32,
+        letterSpacing: f32,
+        wordSpacing: f32,
+    ) f32 {
+        return (pc.letterAdvance * letterSpacing +
+            pc.wordAdvance * wordSpacing +
+            pc.offsetX) * fontSize;
     }
 
     pub fn getAdvanceY(pc: PrintableCharacter, fontSize: f32, lineSpacing: f32) f32 {
