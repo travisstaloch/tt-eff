@@ -1,5 +1,7 @@
 //! adapated from https://github.com/SebLague/Text-Rendering/blob/main/Assets/Scripts/SebText/Renderer/Helpers/GlyphHelper.cs
 
+pub const GlyphBounds = struct { centre: f32x2, size: f32x2 };
+pub const Contours = struct { points: []ttf.f32x2, endIndices: []u32 };
 pub const BoundsAndContours = struct { glyphBounds: GlyphBounds, contours: Contours };
 
 /// map from codepoint to BoundsAndContours
@@ -23,7 +25,7 @@ pub fn createRenderDataMap(
         const glyphBounds = getBounds(glyphData, fontData);
         try renderData.putNoClobber(
             alloc,
-            glyphData.unicodeValue,
+            glyphData.codepoint,
             .{ .glyphBounds = glyphBounds, .contours = contours },
         );
     }
@@ -38,11 +40,6 @@ pub fn destroyRenderDataMap(renderDataMap: *RenderDataMap, alloc: Allocator) voi
     renderDataMap.deinit(alloc);
 }
 
-pub const Contours = struct {
-    points: []ttf.f32x2,
-    endIndices: []u32,
-};
-
 pub fn createContoursWithImpliedPoints(
     alloc: Allocator,
     glyph: GlyphData,
@@ -56,7 +53,7 @@ pub fn createContoursWithImpliedPoints(
     var points = std.ArrayListUnmanaged(f32x2){};
     var endIndices = std.ArrayListUnmanaged(u32){};
 
-    ttf.debug("createContoursWithImpliedPoints() '{u}':{}\n", .{ @as(u21, @intCast(glyph.unicodeValue)), glyph.unicodeValue });
+    ttf.debug("createContoursWithImpliedPoints() '{u}':{}\n", .{ glyph.codepoint, glyph.codepoint });
 
     // temporary lists
     var contour = std.ArrayListUnmanaged(f32x2){};
@@ -121,8 +118,6 @@ pub fn createContoursWithImpliedPoints(
         .endIndices = try endIndices.toOwnedSlice(alloc),
     };
 }
-
-pub const GlyphBounds = struct { centre: f32x2, size: f32x2 };
 
 pub fn getBounds(glyphData: GlyphData, fontData: FontData) GlyphBounds {
     const antiAliasPadding = 0.005;

@@ -27,14 +27,13 @@ $ zig build demo -- /path/to/file.ttf
 
 
 # Todo
-  - [x] parse naming table data
   - [ ] investigate NoGlyph error output when running find-check.py - only from a few .ttf files
   - [ ] add tests of some canonical font files such as those in [IDEAS.md](IDEAS.md#font-testing)
   - [ ] implement component glyphs as point numbers (when flags ARGS_ARE_XY_VALUES is not set)
   - Rendering
-  - Demo
-    - [ ] y direction should be up not down
-    - [ ] glyphs should line up vertically
+    - Demo
+      - [ ] y direction should be up not down
+      - [ ] glyphs should line up vertically
   - [ ] render to buffers like stb_truetype
     - [ ] rasterize like SebLague
       - [ ] implement the counting method from the end of the video
@@ -43,4 +42,5 @@ $ zig build demo -- /path/to/file.ttf
   - [ ] make demo renderer to openGL
   - [ ] maybe convert to xml/json like python fonttools
   - [ ] export a c api and create a header file
-  - [ ] convert some snake case idents to camel (this project uses camel case identifiers and functions)
+  - [x] use u21 for codepoints instead of u32
+  - [x] don't allocate in applyLayoutInfo(). instead create and getLayoutInfo(glyphIndex)

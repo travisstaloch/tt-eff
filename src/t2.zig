@@ -673,7 +673,7 @@ pub fn readGlyph(font: *Font, alloc: mem.Allocator, glyphIndex: u32) !ttf.GlyphD
         .max = countCtx.max,
         .advanceWidth = undefined,
         .leftSideBearing = undefined,
-        .unicodeValue = undefined,
+        .codepoint = undefined,
     };
 }
 

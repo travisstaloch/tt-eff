@@ -415,7 +415,7 @@ const Hhea = packed struct {
     numberOfHMetrics: u16,
 };
 
-const LongHorMetric = extern struct {
+pub const LongHorMetric = extern struct {
     /// Advance width, in font design units.
     advanceWidth: UFWORD,
     /// Glyph left side bearing, in font design units.
@@ -506,11 +506,11 @@ pub const Point = struct {
 };
 
 pub const GlyphData = struct {
-    unicodeValue: u32,
+    codepoint: u21,
     glyphIndex: u32,
     points: []Point,
-    /// these are +1 from what is read from the glyf/loca tables.  this
-    /// just simplifies slicing, i.e. removing the +1 from `points[startIndex..endIndex+1]`
+    /// these are +1 from what is read from the glyf/loca tables in order to
+    /// simplify slicing, i.e. removing the +1 from `points[startIndex..endIndex+1]`
     contourEndIndices: []u32,
     advanceWidth: i32,
     leftSideBearing: i32,
@@ -521,7 +521,7 @@ pub const GlyphData = struct {
     pub const zero: GlyphData = .{
         .points = &.{},
         .contourEndIndices = &.{},
-        .unicodeValue = 0,
+        .codepoint = 0,
         .glyphIndex = 0,
         .advanceWidth = 0,
         .leftSideBearing = 0,
@@ -542,6 +542,9 @@ pub const GlyphData = struct {
     }
 };
 
+/// map from codepoint to GlyphData
+const GlyphMap = std.AutoArrayHashMapUnmanaged(u32, GlyphData);
+
 // TODO use i32v2
 pub const Box = extern struct {
     x0: i32,
@@ -551,8 +554,6 @@ pub const Box = extern struct {
 
     pub const zero = std.mem.zeroes(Box);
 };
-
-const GlyphMap = std.AutoArrayHashMapUnmanaged(u32, GlyphData);
 
 /// aka missing glyph codepoint
 pub const maxNumGlyphs = 0xffff; // 65535
@@ -713,6 +714,8 @@ pub const Font = struct {
         if (font.cffData) |cff| alloc.destroy(cff);
     }
 
+    /// return Data including a map from codepoint to GlyphData for each glyph
+    /// in the font file.
     pub fn parse(font: *Font, alloc: mem.Allocator) !Data {
         const head = font.getTypedTable(.head).?;
         std.log.info("head {}", .{head});
@@ -724,7 +727,7 @@ pub const Font = struct {
         std.log.info("glyph count {}", .{glyphMap.count()});
 
         try font.readAllGlyphs(alloc, &glyphMap);
-        try font.applyLayoutInfo(alloc, font.numGlyphs, &glyphMap);
+        try font.applyLayoutInfo(&glyphMap);
         assert(glyphMap.contains(maxNumGlyphs));
         return .{
             .unitsPerEm = unitsPerEm,
@@ -802,7 +805,6 @@ pub const Font = struct {
     /// Create a lookup from unicode to font's internal glyph index
     fn createGlyphMap(font: Font, alloc: mem.Allocator) !GlyphMap {
         const format = font.readInt(u16, font.indexMap);
-        var missingGlyphCharCode: ?u32 = null;
 
         if (!(format == 12 or format == 13 or format == 4)) {
             std.log.err("Font cmap format not supported (TODO): {}", .{format});
@@ -862,7 +864,10 @@ pub const Font = struct {
                     var glyph: GlyphData = .zero;
                     glyph.glyphIndex = glyphIndex;
                     try map.putNoClobber(alloc, charCode, glyph);
-                    if (glyphIndex == 0) missingGlyphCharCode = charCode;
+                    if (glyphIndex == 0) {
+                        const gop = try map.getOrPut(alloc, maxNumGlyphs);
+                        if (!gop.found_existing) gop.value_ptr.* = glyph;
+                    }
                     charCode += 1;
                 }
             }
@@ -893,7 +898,10 @@ pub const Font = struct {
                     var glyph: GlyphData = .zero;
                     glyph.glyphIndex = glyphIndex;
                     try map.putNoClobber(alloc, charCode, glyph);
-                    if (glyphIndex == 0) missingGlyphCharCode = charCode;
+                    if (glyphIndex == 0) {
+                        const gop = try map.getOrPut(alloc, maxNumGlyphs);
+                        if (!gop.found_existing) gop.value_ptr.* = glyph;
+                    }
                 }
             }
         } else {
@@ -902,11 +910,7 @@ pub const Font = struct {
         }
 
         // ensure the map has an entry at maxNumGlyphs
-        if (missingGlyphCharCode) |cp| {
-            if (!map.contains(maxNumGlyphs)) {
-                try map.putNoClobber(alloc, maxNumGlyphs, map.get(cp).?);
-            }
-        } else {
+        if (!map.contains(maxNumGlyphs)) {
             var glyph: GlyphData = .zero;
             glyph.glyphIndex = 0;
             try map.putNoClobber(alloc, maxNumGlyphs, glyph);
@@ -916,9 +920,9 @@ pub const Font = struct {
         return map;
     }
 
-    pub fn findGlyphIndex(font: Font, codepoint: u32) !u32 {
+    pub fn findGlyphIndex(font: Font, codepoint: u21) !u32 {
         const format = font.readInt(u16, font.indexMap);
-        std.log.debug("findGlyphIndex format {} codepoint {}/'{u}'", .{ format, codepoint, @as(u21, @intCast(codepoint)) });
+        std.log.debug("findGlyphIndex format {} codepoint {}/'{u}'", .{ format, codepoint, codepoint });
         switch (format) {
             4 => {
                 if (codepoint > maxNumGlyphs) return 0;
@@ -968,7 +972,8 @@ pub const Font = struct {
                     return 0;
                 if (idRangeOffset == 0) {
                     const idDelta = byteSwap(idDeltas[i]);
-                    const glyphId = @as(i32, @bitCast(codepoint)) + idDelta;
+                    const cp32: i32 = @bitCast(@as(u32, codepoint));
+                    const glyphId = cp32 + idDelta;
                     return @as(u32, @bitCast(if (glyphId < 0)
                         glyphId + maxNumGlyphs
                     else
@@ -1014,13 +1019,14 @@ pub const Font = struct {
         std.log.info("readAllGlyphs() glyphMap.len {}", .{glyphMap.count()});
 
         for (glyphMap.keys(), glyphMap.values()) |k, *v| {
-            if (font.readGlyph(alloc, v.glyphIndex, glyphMap)) |glyphData| {
+            if (font.readGlyph(alloc, v.glyphIndex)) |glyphData| {
                 v.* = glyphData;
             } else |e| switch (e) {
                 error.NoGlyph => v.* = GlyphData.zero,
                 else => return e,
             }
-            v.unicodeValue = k;
+            v.codepoint = @intCast(k);
+            std.log.debug("readGlyph {u}:{} with {} points", .{ v.codepoint, v.codepoint, v.points.len });
         }
     }
 
@@ -1032,7 +1038,9 @@ pub const Font = struct {
         Charstring,
         NoParentPoints,
         NoChildPoints,
-        Todo,
+        Recursion,
+        NoHhea,
+        NoHmtx,
     } || std.meta.IntToEnumError;
 
     const PointList = std.ArrayListUnmanaged(Point);
@@ -1041,21 +1049,23 @@ pub const Font = struct {
         font: *Font,
         alloc: mem.Allocator,
         glyphIndex: u32,
-        glyphMap: *GlyphMap,
     ) ReadGlyphError!GlyphData {
-        return if (font.cffData == null)
-            font.readGlyphTT(alloc, glyphIndex, glyphMap)
+        var glyph = try if (font.cffData == null)
+            font.readGlyphTT(alloc, glyphIndex)
             // else if (use_c)
             //     font.readGlyphT2Old(alloc, glyphIndex)
         else
             t2.readGlyph(font, alloc, glyphIndex);
+        const layout = try font.getLayoutInfo(glyphIndex);
+        glyph.leftSideBearing = layout.leftSideBearing;
+        glyph.advanceWidth = layout.advanceWidth;
+        return glyph;
     }
 
     fn readGlyphTT(
         font: *Font,
         alloc: mem.Allocator,
         glyphIndex: u32,
-        glyphMap: *GlyphMap,
     ) ReadGlyphError!GlyphData {
         const glyphLocation = try font.getGlyphLocation(glyphIndex);
         const contourCount = font.readInt(i16, glyphLocation);
@@ -1064,11 +1074,10 @@ pub const Font = struct {
         // * Simple: outline data is stored here directly
         // * Compound: two or more simple glyphs need to be looked up, transformed, and combined
         const isSimpleGlyph = contourCount >= 0;
-
         return if (isSimpleGlyph)
             font.readSimpleGlyph(alloc, glyphLocation, glyphIndex)
         else
-            font.readCompoundGlyph(alloc, glyphLocation, glyphIndex, glyphMap);
+            font.readCompoundGlyph(alloc, glyphLocation, glyphIndex);
     }
 
     const Flags = packed struct(u8) {
@@ -1132,7 +1141,7 @@ pub const Font = struct {
             .contourEndIndices = contourEndIndices,
             .min = min,
             .max = max,
-            .unicodeValue = undefined,
+            .codepoint = undefined,
             .advanceWidth = undefined,
             .leftSideBearing = undefined,
         };
@@ -1147,17 +1156,16 @@ pub const Font = struct {
         for (0..allFlags.len) |i| {
             const currFlag = allFlags[i];
 
-            // Offset value is represented with 1 byte (unsigned)
-            // Here the instruction flag tells us whether to add or subtract the offset
             if (readingX) {
                 if (currFlag.isSingleByteX) {
+                    // Offset value is represented with 1 byte (unsigned)
+                    // Here the instruction flag tells us whether to add or subtract the offset
                     const coordOffset: i16 = try reader.readByte();
                     const positiveOffset = currFlag.instructionX;
                     coordVal += if (positiveOffset) coordOffset else -coordOffset;
-                }
-                // Offset value is represented with 2 bytes (signed)
-                // Here the instruction flag tells us whether an offset value exists or not
-                else if (!currFlag.instructionX) {
+                } else if (!currFlag.instructionX) {
+                    // Offset value is represented with 2 bytes (signed)
+                    // Here the instruction flag tells us whether an offset value exists or not
                     coordVal += try reader.readInt(i16, .big);
                 }
             } else {
@@ -1165,10 +1173,7 @@ pub const Font = struct {
                     const coordOffset: i16 = try reader.readByte();
                     const positiveOffset = currFlag.instructionY;
                     coordVal += if (positiveOffset) coordOffset else -coordOffset;
-                }
-                // Offset value is represented with 2 bytes (signed)
-                // Here the instruction flag tells us whether an offset value exists or not
-                else if (!currFlag.instructionY) {
+                } else if (!currFlag.instructionY) {
                     coordVal += try reader.readInt(i16, .big);
                 }
             }
@@ -1189,7 +1194,6 @@ pub const Font = struct {
         alloc: mem.Allocator,
         glyphLocation: u32,
         glyphIndex: u32,
-        glyphMap: *GlyphMap,
     ) !GlyphData {
         var fbs = std.io.fixedBufferStream(font.data[glyphLocation..]);
         const reader = fbs.reader();
@@ -1204,6 +1208,7 @@ pub const Font = struct {
             try reader.readInt(i16, .big),
             try reader.readInt(i16, .big),
         );
+        std.log.debug("readCompoundGlyph() min {} max {}", .{ min, max });
 
         var points = std.ArrayListUnmanaged(Point){};
         defer points.deinit(alloc);
@@ -1212,13 +1217,16 @@ pub const Font = struct {
         while (true) {
             const flags: CompoundFlags = @bitCast(try reader.readInt(u16, .big));
             const childGlyphIndex = try reader.readInt(u16, .big);
-            std.log.debug("flags {} childGlyphIndex {}", .{ flags, childGlyphIndex });
+            std.log.debug(
+                "childGlyphIndex {} flags xy:{} words:{}",
+                .{ childGlyphIndex, flags.args_are_xy_values, flags.arg_1_and_2_are_words },
+            );
             // If compound glyph refers to itself, stop.  this might be a bug.
-            if (try font.getGlyphLocation(childGlyphIndex) == glyphLocation) break;
+            if (try font.getGlyphLocation(childGlyphIndex) == glyphLocation) return error.Recursion;
 
             var mtx = [_]f32{ 1, 0, 0, 1, 0, 0 };
             // Read args (these are either x/y offsets, or point number)
-            if (flags.args_are_xy_values) {
+            const pcIds: ?[2]u16 = if (flags.args_are_xy_values) blk: {
                 if (flags.arg_1_and_2_are_words) {
                     mtx[4] = @floatFromInt(try reader.readInt(i16, .big));
                     mtx[5] = @floatFromInt(try reader.readInt(i16, .big));
@@ -1226,8 +1234,17 @@ pub const Font = struct {
                     mtx[4] = @floatFromInt(try reader.readByte());
                     mtx[5] = @floatFromInt(try reader.readByte());
                 }
-            } else {
+                break :blk null;
+            } else blk: {
                 // from https://learn.microsoft.com/en-us/typography/opentype/spec/glyf#composite-glyph-description
+                // The argument1 and argument2 fields of the component glyph
+                // record are used to determine the placement of the child
+                // component glyph within the parent composite glyph. They are
+                // interpreted either as an offset vector or as points from the
+                // parent and the child, according to whether the
+                // ARGS_ARE_XY_VALUES flag is set. This flag must always be set
+                // for the first component of a composite glyph.
+
                 // If ARGS_ARE_XY_VALUES is not set, then argument1 is a point
                 // number in the parent glyph (from contours incoporated and
                 // re-numbered from previous component glyphs); and argument2 is a
@@ -1261,21 +1278,20 @@ pub const Font = struct {
                     try reader.readByte(),
                     try reader.readByte(),
                 };
+
                 // for (glyphMap.values(), 0..) |v, i|
-                //     std.log.debug("map[{}] glyphIndex {} codepoint {u}:{}", .{ i, v.glyphIndex, @as(u21, @intCast(v.unicodeValue)), v.unicodeValue });
-                std.log.info(
-                    "parentIndex {} childIndex {} glyphIndex {} childGlyphIndex {} points {}",
-                    .{ parentIndex, childIndex, glyphIndex, childGlyphIndex, points.items.len },
-                );
+                //     std.log.debug("map[{}] glyphIndex {} codepoint {u}:{}", .{ i, v.glyphIndex, v.codepoint, v.codepoint });
+
+                break :blk .{ parentIndex, childIndex };
 
                 // match l-th (child) point of the newly loaded component to the k-th (parent) point
                 // of the previously loaded components.
 
-                if (true) {
-                    std.log.err("TODO: Args1&2 are point indices to be matched, rather than offsets", .{});
-                    return error.Todo;
-                }
-            }
+                // if (true) {
+                //     std.log.err("TODO: Args1&2 are point indices to be matched, rather than offsets", .{});
+                //     return error.Todo;
+                // }
+            };
 
             if (flags.we_have_a_scale) {
                 mtx[0] = @floatCast(try readFixedPoint2Dot14(reader));
@@ -1298,7 +1314,7 @@ pub const Font = struct {
             const n = @sqrt(mtx[2] * mtx[2] + mtx[3] * mtx[3]);
 
             const pos = fbs.pos;
-            var childGlyph = font.readGlyph(alloc, childGlyphIndex, glyphMap) catch |e| switch (e) {
+            var childGlyph = font.readGlyph(alloc, childGlyphIndex) catch |e| switch (e) {
                 error.NoGlyph => break,
                 else => return e,
             };
@@ -1307,8 +1323,10 @@ pub const Font = struct {
 
             for (0..childGlyph.points.len) |i| {
                 const point = childGlyph.points[i].vec2();
-                childGlyph.points[i].xy.x = @intFromFloat(m * (mtx[0] * point.x + mtx[2] * point.y + mtx[4]));
-                childGlyph.points[i].xy.y = @intFromFloat(n * (mtx[1] * point.x + mtx[3] * point.y + mtx[5]));
+                childGlyph.points[i].xy = .from(
+                    m * (mtx[0] * point.x + mtx[2] * point.y + mtx[4]),
+                    n * (mtx[1] * point.x + mtx[3] * point.y + mtx[5]),
+                );
             }
 
             // Add all contour end indices from the simple glyph component to the compound glyph's data
@@ -1317,9 +1335,14 @@ pub const Font = struct {
                 try contourEndIndices.append(endIndex + @as(u32, @intCast(points.items.len)));
             }
             try points.appendSlice(alloc, childGlyph.points);
+            if (pcIds) |ids| {
+                std.log.debug("pcIds {any} parent points {} child points {}", .{ ids, points.items.len, childGlyph.points.len });
+                unreachable;
+            }
 
             if (!flags.more_components) break;
         }
+        // std.log.info("readCompoundGlyph() points {any}", .{points.items});
 
         return .{
             .glyphIndex = glyphIndex,
@@ -1327,7 +1350,7 @@ pub const Font = struct {
             .contourEndIndices = try contourEndIndices.toOwnedSlice(),
             .min = min,
             .max = max,
-            .unicodeValue = undefined,
+            .codepoint = undefined,
             .advanceWidth = undefined,
             .leftSideBearing = undefined,
         };
@@ -1373,40 +1396,40 @@ pub const Font = struct {
     }
 
     // Get horizontal layout information from the "hhea" and "hmtx" tables
-    fn applyLayoutInfo(font: Font, alloc: mem.Allocator, numGlyphs: u32, glyphMap: *GlyphMap) !void {
-        var layoutData = try alloc.alloc([2]i32, numGlyphs);
-        defer alloc.free(layoutData);
+    fn applyLayoutInfo(font: Font, glyphMap: *GlyphMap) !void {
+        for (glyphMap.values()) |*g| {
+            const layout = try font.getLayoutInfo(g.glyphIndex);
+            g.advanceWidth = layout.advanceWidth;
+            g.leftSideBearing = layout.leftSideBearing;
+        }
+    }
 
+    // Get horizontal layout information from the "hhea" and "hmtx" tables for the given glyphIndex
+    pub fn getLayoutInfo(font: Font, glyphIndex: u32) !LongHorMetric {
         const hhea = font.getTypedTable(.hhea) orelse return error.NoHhea;
         const numAdvanceWidthMetrics = hhea.numberOfHMetrics;
 
         // Get the advance width and leftsideBearing metrics from the 'hmtx' table
         const hmetrics = font.getPtr(.hmtx, [*]const LongHorMetric) orelse
             return error.NoHmtx;
-        var lastAdvanceWidth: u16 = 0;
 
-        for (0..numAdvanceWidthMetrics) |i| {
-            const hmetric = hmetrics[i];
-            lastAdvanceWidth = byteSwap(hmetric.advanceWidth);
-            const leftSideBearing = byteSwap(hmetric.leftSideBearing);
-            layoutData[i] = .{ lastAdvanceWidth, leftSideBearing };
+        if (glyphIndex < numAdvanceWidthMetrics) {
+            const hmetric = hmetrics[glyphIndex];
+            return .{
+                .advanceWidth = byteSwap(hmetric.advanceWidth),
+                .leftSideBearing = byteSwap(hmetric.leftSideBearing),
+            };
         }
 
         // Some fonts have a run of monospace characters at the end
-        const numRem = numGlyphs - numAdvanceWidthMetrics;
+        const numRem = glyphIndex - numAdvanceWidthMetrics;
+        const lastHmetric = hmetrics[numAdvanceWidthMetrics - 1];
         const lsbs: [*]const i16 = @ptrCast(@alignCast(hmetrics + numAdvanceWidthMetrics));
 
-        for (0..numRem) |i| {
-            const leftSideBearing = byteSwap(lsbs[i]);
-            const glyphIndex = numAdvanceWidthMetrics + i;
-            layoutData[glyphIndex] = .{ lastAdvanceWidth, leftSideBearing };
-        }
-
-        // Apply
-        for (glyphMap.values()) |*g| {
-            g.advanceWidth = layoutData[g.glyphIndex][0];
-            g.leftSideBearing = layoutData[g.glyphIndex][1];
-        }
+        return .{
+            .advanceWidth = byteSwap(lastHmetric.advanceWidth),
+            .leftSideBearing = byteSwap(lsbs[numRem]),
+        };
     }
 
     pub fn vMetrics(font: Font) VMetrics {
@@ -1423,7 +1446,7 @@ pub const Font = struct {
         return height / fheight;
     }
 
-    pub fn codepointBitmapBoxSubpixel(font: *Font, codepoint: u32, scaleXy: [2]f32, shiftXy: [2]f32) !Box {
+    pub fn codepointBitmapBoxSubpixel(font: *Font, codepoint: u21, scaleXy: [2]f32, shiftXy: [2]f32) !Box {
         const glyphIndex = try font.findGlyphIndex(codepoint);
         std.log.info("glyphIndex {}", .{glyphIndex});
         return font.glyphBitmapBoxSubpixel(glyphIndex, scaleXy, shiftXy);

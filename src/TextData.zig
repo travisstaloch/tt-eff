@@ -12,10 +12,10 @@ pub fn init(alloc: std.mem.Allocator, text: []const u8, fontData: FontData) !Tex
     const Context = struct {
         pub fn eql(_: @This(), a: GlyphData, b: GlyphData, b_index: usize) bool {
             _ = b_index;
-            return a.unicodeValue == b.unicodeValue;
+            return a.codepoint == b.codepoint;
         }
         pub fn hash(_: @This(), a: GlyphData) u32 {
-            return a.unicodeValue;
+            return a.codepoint;
         }
     };
     var charToIndexTable = std.ArrayHashMap(GlyphData, u32, Context, false).init(alloc);
