@@ -729,6 +729,7 @@ pub const Font = struct {
         try font.readAllGlyphs(alloc, &glyphMap);
         try font.applyLayoutInfo(&glyphMap);
         assert(glyphMap.contains(maxNumGlyphs));
+
         return .{
             .unitsPerEm = unitsPerEm,
             .glyphMap = glyphMap,
@@ -1026,7 +1027,7 @@ pub const Font = struct {
                 else => return e,
             }
             v.codepoint = @intCast(k);
-            std.log.debug("readGlyph {u}:{} with {} points", .{ v.codepoint, v.codepoint, v.points.len });
+            std.log.debug("readGlyph done {u}:{} with {} points", .{ v.codepoint, v.codepoint, v.points.len });
         }
     }
 
@@ -1041,12 +1042,13 @@ pub const Font = struct {
         Recursion,
         NoHhea,
         NoHmtx,
+        Todo,
     } || std.meta.IntToEnumError;
 
     const PointList = std.ArrayListUnmanaged(Point);
 
     pub fn readGlyph(
-        font: *Font,
+        font: *const Font,
         alloc: mem.Allocator,
         glyphIndex: u32,
     ) ReadGlyphError!GlyphData {
@@ -1063,7 +1065,7 @@ pub const Font = struct {
     }
 
     fn readGlyphTT(
-        font: *Font,
+        font: *const Font,
         alloc: mem.Allocator,
         glyphIndex: u32,
     ) ReadGlyphError!GlyphData {
@@ -1190,7 +1192,7 @@ pub const Font = struct {
     }
 
     fn readCompoundGlyph(
-        font: *Font,
+        font: *const Font,
         alloc: mem.Allocator,
         glyphLocation: u32,
         glyphIndex: u32,
@@ -1271,6 +1273,11 @@ pub const Font = struct {
                 // python fonttools
                 // https://github.com/fonttools/fonttools/blob/682d72ab6a12bbdd04b2c37fbacef83501327054/Lib/fontTools/ttLib/tables/_g_l_y_f.py#L1213
 
+                //two point numbers.
+                //the first point number indicates the point that is to be matched to the new glyph.
+                //The second number indicates the new glyph's “matched” point.
+                //Once a glyph is added,its point numbers begin directly after the last glyphs (endpoint of first glyph + 1)
+
                 const parentIndex, const childIndex = if (flags.arg_1_and_2_are_words) .{
                     try reader.readInt(u16, .big),
                     try reader.readInt(u16, .big),
@@ -1336,8 +1343,8 @@ pub const Font = struct {
             }
             try points.appendSlice(alloc, childGlyph.points);
             if (pcIds) |ids| {
-                std.log.debug("pcIds {any} parent points {} child points {}", .{ ids, points.items.len, childGlyph.points.len });
-                unreachable;
+                std.log.warn("pcIds {any} parent points {} child points {}", .{ ids, points.items.len, childGlyph.points.len });
+                return error.Todo;
             }
 
             if (!flags.more_components) break;
@@ -1446,12 +1453,12 @@ pub const Font = struct {
         return height / fheight;
     }
 
-    pub fn codepointBitmapBoxSubpixel(font: *Font, codepoint: u21, scaleXy: [2]f32, shiftXy: [2]f32) !Box {
+    pub fn codepointBitmapBoxSubpixel(font: *const Font, codepoint: u21, scaleXy: [2]f32, shiftXy: [2]f32) !Box {
         const glyphIndex = try font.findGlyphIndex(codepoint);
         std.log.info("glyphIndex {}", .{glyphIndex});
         return font.glyphBitmapBoxSubpixel(glyphIndex, scaleXy, shiftXy);
     }
-    pub fn glyphBitmapBoxSubpixel(font: *Font, glyphIndex: u32, scaleXy: [2]f32, shiftXy: [2]f32) Box {
+    pub fn glyphBitmapBoxSubpixel(font: *const Font, glyphIndex: u32, scaleXy: [2]f32, shiftXy: [2]f32) Box {
         return if (font.glyphBox(glyphIndex, null)) |box| .{
             .x0 = @intFromFloat(std.math.floor(@as(f32, @floatFromInt(box.x0)) * scaleXy[0] + shiftXy[0])),
             .y0 = @intFromFloat(std.math.floor(@as(f32, @floatFromInt(-box.y1)) * scaleXy[1] + shiftXy[1])),
@@ -1462,7 +1469,7 @@ pub const Font = struct {
         else Box.zero;
     }
 
-    pub fn glyphBox(font: *Font, glyphIndex: u32, outNumVertices: ?*u32) ?Box {
+    pub fn glyphBox(font: *const Font, glyphIndex: u32, outNumVertices: ?*u32) ?Box {
         if (font.cffData != null) {
             return t2.glyphInfo(font, glyphIndex, outNumVertices);
         } else {
@@ -1504,7 +1511,7 @@ pub const Font = struct {
         }
     }
 
-    pub fn getName(font: *Font, nameId: NameId) ?[]const u8 {
+    pub fn getName(font: *const Font, nameId: NameId) ?[]const u8 {
         const tbl = font.findTable(.name) orelse return null;
         const count = font.readInt(u16, tbl.offset + 2);
         const offset = font.readInt(u16, tbl.offset + 4);
@@ -1518,6 +1525,138 @@ pub const Font = struct {
             }
         }
         return null;
+    }
+
+    fn maxNameLen(comptime fields: anytype) comptime_int {
+        comptime {
+            var len: comptime_int = 0;
+            for (fields) |field| {
+                len = @max(field.name.len, len);
+            }
+            return len;
+        }
+    }
+
+    fn dumpTable(font: Font, writer: anytype, comptime tag: Table.Tag) !void {
+        try writer.print("{s}\n", .{@tagName(tag)});
+        const h = font.getTypedTable(tag).?;
+        const fields = @typeInfo(@TypeOf(h)).@"struct".fields;
+        const maxLen = maxNameLen(fields);
+        inline for (fields) |field| {
+            try writer.print("  {s}:", .{field.name});
+            try writer.writeByteNTimes(' ', maxLen - field.name.len + 1);
+            try writer.print("{}\n", .{@field(h, field.name)});
+        }
+    }
+    fn dumpStruct(writer: anytype, tbl: anytype) !void {
+        const fields = @typeInfo(@TypeOf(tbl)).@"struct".fields;
+        const maxLen = maxNameLen(fields);
+        inline for (fields) |field| {
+            try writer.print("  {s}:", .{field.name});
+            try writer.writeByteNTimes(' ', maxLen - field.name.len + 1);
+            try writer.print("{}\n", .{@field(tbl, field.name)});
+        }
+    }
+
+    const DumpFmt = struct {
+        font: Font,
+        codepoint: ?u21,
+        alloc: mem.Allocator,
+
+        pub fn format(f: DumpFmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const font = f.font;
+            try writer.print("-- dump --\n{?s}\n", .{font.getName(.uniqueId)});
+            try writer.print("numGlyphs {}\n", .{font.numGlyphs});
+
+            if (f.codepoint) |cp| blk: {
+                const glyphIndex = try font.findGlyphIndex(cp);
+                try writer.print("-- codepoint '{u}' --\n  glyphIndex {}\n", .{ cp, glyphIndex });
+                var glyph = font.readGlyph(f.alloc, glyphIndex) catch break :blk;
+                try writer.print("  min {}\n  max {}\n", .{ glyph.min, glyph.max });
+                defer glyph.deinit(f.alloc);
+                try writer.print(
+                    "  advanceWidth {}\n  leftSideBearing {}\n  points {}\n",
+                    .{ glyph.advanceWidth, glyph.leftSideBearing, glyph.points.len },
+                );
+                var end: u32 = 0;
+                for (glyph.contourEndIndices, 0..) |ei, i| {
+                    try writer.print("  -- contour {}: {} points --\n", .{ i, ei - end });
+                    for (glyph.points[end..ei], 0..) |pt, j| {
+                        try writer.print(
+                            "  {s}{d:.0}\x1b[0m {}/{}\n",
+                            .{ if (pt.onCurve) "\x1b[1;94m" else "\x1b[1;91m", pt.vec2(), j, j + end },
+                        );
+                    }
+                    end = ei;
+                }
+                {
+                    try writer.print("name\n", .{});
+                    var maxLen: usize = 0;
+                    inline for (@typeInfo(NameId).@"enum".fields) |field| {
+                        if (font.getName(@enumFromInt(field.value)) != null)
+                            maxLen = @max(maxLen, field.name.len);
+                    }
+                    inline for (@typeInfo(NameId).@"enum".fields) |field| {
+                        if (font.getName(@enumFromInt(field.value))) |s| {
+                            try writer.print("  {s}:", .{field.name});
+                            try writer.writeByteNTimes(' ', maxLen - field.name.len + 1);
+                            try writer.print("{s}\n", .{s});
+                        }
+                    }
+                }
+                try font.dumpTable(writer, .head);
+                {
+                    try writer.print("cmap\n", .{});
+                    const h = font.getTypedTable(.cmap).?;
+                    const fields = @typeInfo(CmapHeader).@"struct".fields;
+                    const maxLen = maxNameLen(fields);
+                    inline for (fields) |field| {
+                        try writer.print("  {s}:", .{field.name});
+                        try writer.writeByteNTimes(' ', maxLen - field.name.len + 1);
+                        try writer.print("{}\n", .{@field(h, field.name)});
+                    }
+                }
+
+                const formati = font.readInt(u16, font.indexMap);
+                switch (formati) {
+                    4 => {
+                        const tblp = font.getPtrAt(font.indexMap, *const SegmentToDelta);
+                        var tbl = tblp.*;
+                        byteSwapAll(SegmentToDelta, &tbl);
+                        try dumpStruct(writer, tbl);
+                    },
+                    12, 13 => {
+                        const tblp = font.getPtrAt(font.indexMap, *align(1) const FmtSegmentedTable);
+                        var tbl = tblp.*;
+                        byteSwapAll(FmtSegmentedTable, &tbl);
+                        try dumpStruct(writer, tbl);
+                    },
+                    else => {},
+                }
+
+                try font.dumpTable(writer, .hhea);
+
+                if (font.getTypedTable(.maxp)) |maxp| {
+                    try writer.print("maxp\n", .{});
+                    switch (maxp.version) {
+                        0x00005000 => {
+                            try font.dumpTable(writer, .hhea);
+                        },
+                        0x00010000 => {
+                            const t = font.findTable(.maxp).?;
+                            const tblp = font.getPtrAt(t.offset, *align(1) const MaxP_V10);
+                            var tbl = tblp.*;
+                            byteSwapAll(MaxP_V10, &tbl);
+                            try dumpStruct(writer, tbl);
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
+    };
+    pub fn dumpFmt(font: Font, codepoint: ?u21, alloc: mem.Allocator) DumpFmt {
+        return .{ .font = font, .codepoint = codepoint, .alloc = alloc };
     }
 };
 

@@ -343,7 +343,7 @@ const Instruction = enum(u8) {
     }
 };
 
-fn runCharstring(font: *Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
+fn runCharstring(font: *const Font, glyphIndex: u32, ctx: *CharstringCtx) !void {
     debugCharstring("runCharstring() glyphIndex {}\n", .{glyphIndex});
 
     var maskbits: u32 = 0;
@@ -651,7 +651,7 @@ fn getGlyphSubrs(info: *const Font, glyphIndex: u32) Buf {
     );
 }
 
-pub fn readGlyph(font: *Font, alloc: mem.Allocator, glyphIndex: u32) !ttf.GlyphData {
+pub fn readGlyph(font: *const Font, alloc: mem.Allocator, glyphIndex: u32) !ttf.GlyphData {
     var countCtx = CharstringCtx.init(.boundsOnly);
     var outputCtx = CharstringCtx.init(.{ .allocatePoints = alloc });
     defer outputCtx.deinit(alloc);
@@ -677,7 +677,7 @@ pub fn readGlyph(font: *Font, alloc: mem.Allocator, glyphIndex: u32) !ttf.GlyphD
     };
 }
 
-pub fn glyphInfo(font: *Font, glyphIndex: u32, outNumVertices: ?*u32) ?ttf.Box {
+pub fn glyphInfo(font: *const Font, glyphIndex: u32, outNumVertices: ?*u32) ?ttf.Box {
     var ctx = CharstringCtx.init(.boundsOnly);
     const ok = if (runCharstring(font, glyphIndex, &ctx)) |_| true else |_| false;
 

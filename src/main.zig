@@ -13,17 +13,6 @@ const ArgParser = clarp.Parser(struct {
             .file = .{ .positional = true },
             .codepoint = .{ .positional = true, .utf8 = true },
         },
-        .overrides = struct {
-            pub fn codepoint(
-                ctx: clarp.Ctx,
-                self: *ArgParser.Result,
-                fields_seen: ?*std.StaticBitSet(2),
-            ) anyerror!void {
-                self.codepoint = try std.unicode.utf8Decode(ctx.args.*[0]);
-                ctx.args.* = ctx.args.*[1..];
-                fields_seen.?.set(1);
-            }
-        },
     };
 }, .{});
 
@@ -35,7 +24,6 @@ pub fn main() !void {
     defer std.process.argsFree(alloc, args);
 
     const parsed = try ArgParser.parse(args, .{ .err_writer = std.io.getStdErr().writer().any() });
-
     std.debug.print("{s}\n", .{parsed.result.file});
     const f = try std.fs.cwd().openFile(parsed.result.file, .{});
     defer f.close();
@@ -45,38 +33,19 @@ pub fn main() !void {
     std.log.info("{s}", .{args[1]});
     var font = try ttf.Font.init(alloc, contents);
     defer font.deinit(alloc);
-    var data = font.parse(alloc) catch ttf.Font.Data{ .unitsPerEm = 0 };
+    var data = try font.parse(alloc); // catch ttf.Font.Data{ .unitsPerEm = 0 };
     defer data.deinit(alloc);
     if (data.glyphMap.get(0xffff) == null) {
         std.log.err("no missing glyph\n", .{});
-        return error.NoMissingGlyph;
     }
-    // try font.readNameTable();
-    std.debug.print("{?s}\n", .{font.getName(.uniqueId)});
-    std.debug.print("numGlyphs {} unitsPerEm {}\n", .{ font.numGlyphs, data.unitsPerEm });
-    // for (data.glyphMap.values()) |v| {
-    //     std.debug.print("char {} points {}\n", .{ v.unicodeValue, v.points.len });
-    // }
+    // std.debug.print("{?s}\n", .{font.getName(.uniqueId)});
+    // std.debug.print("numGlyphs {} unitsPerEm {}\n", .{ font.numGlyphs, data.unitsPerEm });
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("{}\n", .{font.dumpFmt(parsed.result.codepoint, alloc)});
 
-    if (parsed.result.codepoint) |cp| {
-        const glyphIndex = try font.findGlyphIndex(cp);
-        std.debug.print("codepoint {u} glyphIndex {}\n", .{ cp, glyphIndex });
-        var glyph = try font.readGlyph(alloc, glyphIndex);
-        std.debug.print("min {} max {}\n", .{ glyph.min, glyph.max });
-        // const layout = try font.getLayoutInfo(glyphIndex);
-        defer glyph.deinit(alloc);
-        std.debug.print("advanceWidth {} leftSideBearing {}\n", .{ glyph.advanceWidth, glyph.leftSideBearing });
-        var end: u32 = 0;
-        for (glyph.contourEndIndices, 0..) |ei, i| {
-            std.debug.print("-- contour {}: {} points --\n", .{ i, ei - end });
-            for (glyph.points[end..ei]) |pt| {
-                std.debug.print("{s} {d:.0}\n", .{ if (pt.onCurve) "+" else "-", pt.vec2() });
-            }
-            end = ei;
-        }
-        const scale = font.scaleForPixelHeight(40);
-        const x_shift = 0;
-        const box = try font.codepointBitmapBoxSubpixel(cp, .{ scale, scale }, .{ x_shift, 0 });
-        std.debug.print("box {}\n", .{box});
-    }
+    //     const scale = font.scaleForPixelHeight(40);
+    //     const x_shift = 0;
+    //     const box = try font.codepointBitmapBoxSubpixel(cp, .{ scale, scale }, .{ x_shift, 0 });
+    //     std.debug.print("box {}\n", .{box});
+    // }
 }
