@@ -542,6 +542,17 @@ pub const GlyphData = struct {
     }
 };
 
+pub const PointList = std.ArrayListUnmanaged(Point);
+pub const Contours = struct {
+    points: PointList = .{},
+    endIndices: std.ArrayListUnmanaged(u32) = .{},
+
+    pub fn deinit(cs: *Contours, alloc: mem.Allocator) void {
+        cs.points.deinit(alloc);
+        cs.endIndices.deinit(alloc);
+    }
+};
+
 /// map from codepoint to GlyphData
 const GlyphMap = std.AutoArrayHashMapUnmanaged(u32, GlyphData);
 
@@ -1020,7 +1031,9 @@ pub const Font = struct {
         std.log.info("readAllGlyphs() glyphMap.len {}", .{glyphMap.count()});
 
         for (glyphMap.keys(), glyphMap.values()) |k, *v| {
-            if (font.readGlyph(alloc, v.glyphIndex)) |glyphData| {
+            var contours: Contours = .{};
+            defer contours.deinit(alloc);
+            if (font.readGlyph(alloc, v.glyphIndex, &contours)) |glyphData| {
                 v.* = glyphData;
             } else |e| switch (e) {
                 error.NoGlyph => v.* = GlyphData.zero,
@@ -1045,19 +1058,18 @@ pub const Font = struct {
         Todo,
     } || std.meta.IntToEnumError;
 
-    const PointList = std.ArrayListUnmanaged(Point);
-
     pub fn readGlyph(
         font: *const Font,
         alloc: mem.Allocator,
         glyphIndex: u32,
+        contours: *Contours,
     ) ReadGlyphError!GlyphData {
         var glyph = try if (font.cffData == null)
-            font.readGlyphTT(alloc, glyphIndex)
+            font.readGlyphTT(alloc, glyphIndex, contours)
             // else if (use_c)
             //     font.readGlyphT2Old(alloc, glyphIndex)
         else
-            t2.readGlyph(font, alloc, glyphIndex);
+            t2.readGlyph(font, alloc, glyphIndex, contours);
         const layout = try font.getLayoutInfo(glyphIndex);
         glyph.leftSideBearing = layout.leftSideBearing;
         glyph.advanceWidth = layout.advanceWidth;
@@ -1068,6 +1080,7 @@ pub const Font = struct {
         font: *const Font,
         alloc: mem.Allocator,
         glyphIndex: u32,
+        contours: *Contours,
     ) ReadGlyphError!GlyphData {
         const glyphLocation = try font.getGlyphLocation(glyphIndex);
         const contourCount = font.readInt(i16, glyphLocation);
@@ -1077,9 +1090,9 @@ pub const Font = struct {
         // * Compound: two or more simple glyphs need to be looked up, transformed, and combined
         const isSimpleGlyph = contourCount >= 0;
         return if (isSimpleGlyph)
-            font.readSimpleGlyph(alloc, glyphLocation, glyphIndex)
+            font.readSimpleGlyph(alloc, glyphLocation, glyphIndex, contours)
         else
-            font.readCompoundGlyph(alloc, glyphLocation, glyphIndex);
+            font.readCompoundGlyph(alloc, glyphLocation, glyphIndex, contours);
     }
 
     const Flags = packed struct(u8) {
@@ -1093,12 +1106,18 @@ pub const Font = struct {
     };
 
     /// Read a simple glyph from the 'glyf' table
-    fn readSimpleGlyph(font: Font, alloc: mem.Allocator, glyphLocation: u32, glyphIndex: u32) !GlyphData {
+    fn readSimpleGlyph(
+        font: Font,
+        alloc: mem.Allocator,
+        glyphLocation: u32,
+        glyphIndex: u32,
+        contours: *Contours,
+    ) !GlyphData {
         var fbs = std.io.fixedBufferStream(font.data[glyphLocation..]);
         const reader = fbs.reader();
 
-        const contourCount = try reader.readInt(i16, .big);
-        if (contourCount < 0) return error.ExpectedSimpleGlyph;
+        const contourCountI = try reader.readInt(i16, .big);
+        if (contourCountI < 0) return error.ExpectedSimpleGlyph;
         const min = i32x2.init(
             try reader.readInt(i16, .big),
             try reader.readInt(i16, .big),
@@ -1107,19 +1126,18 @@ pub const Font = struct {
             try reader.readInt(i16, .big),
             try reader.readInt(i16, .big),
         );
-        const contourEndIndices = try alloc.alloc(u32, @intCast(contourCount));
-        errdefer alloc.free(contourEndIndices);
+        const contourCount: u16 = @bitCast(contourCountI);
+        try contours.endIndices.ensureUnusedCapacity(alloc, contourCount);
         var numPoints: u32 = 0;
-        for (0..@intCast(contourCount)) |i| {
+        for (0..contourCount) |_| {
             const endIndex: u32 = try reader.readInt(u16, .big) + 1;
             numPoints = @max(numPoints, endIndex);
-            contourEndIndices[i] = @intCast(endIndex);
+            contours.endIndices.appendAssumeCapacity(endIndex);
         }
         const instructionsLength = try reader.readInt(u16, .big);
         try reader.skipBytes(@intCast(instructionsLength), .{}); // skip instructions (hinting stuff)
-        const points = try alloc.alloc(Point, @intCast(numPoints));
-        errdefer alloc.free(points);
-        const allFlags = try alloc.alloc(Flags, @intCast(numPoints));
+
+        const allFlags = try alloc.alloc(Flags, numPoints);
         defer alloc.free(allFlags);
         var i: u32 = 0;
         while (i < numPoints) : (i += 1) {
@@ -1134,13 +1152,16 @@ pub const Font = struct {
             }
         }
 
-        try readCoords(reader, true, allFlags, points);
-        try readCoords(reader, false, allFlags, points);
+        try contours.points.ensureUnusedCapacity(alloc, numPoints);
+        contours.points.items.len += numPoints;
+
+        try readCoords(reader, true, allFlags, &contours.points);
+        try readCoords(reader, false, allFlags, &contours.points);
 
         return .{
             .glyphIndex = glyphIndex,
-            .points = points,
-            .contourEndIndices = contourEndIndices,
+            .points = try contours.points.toOwnedSlice(alloc),
+            .contourEndIndices = try contours.endIndices.toOwnedSlice(alloc),
             .min = min,
             .max = max,
             .codepoint = undefined,
@@ -1149,7 +1170,12 @@ pub const Font = struct {
         };
     }
 
-    fn readCoords(reader: anytype, readingX: bool, allFlags: []const Flags, points: []Point) !void {
+    fn readCoords(
+        reader: anytype,
+        readingX: bool,
+        allFlags: []const Flags,
+        points: *PointList,
+    ) !void {
         var min: i32 = std.math.maxInt(i32);
         var max: i32 = std.math.minInt(i32);
 
@@ -1181,10 +1207,10 @@ pub const Font = struct {
             }
 
             if (readingX)
-                points[i].xy.x = coordVal
+                points.items[i].xy.x = coordVal
             else
-                points[i].xy.y = coordVal;
-            points[i].onCurve = currFlag.onCurve;
+                points.items[i].xy.y = coordVal;
+            points.items[i].onCurve = currFlag.onCurve;
 
             min = @min(min, coordVal);
             max = @max(max, coordVal);
@@ -1196,6 +1222,7 @@ pub const Font = struct {
         alloc: mem.Allocator,
         glyphLocation: u32,
         glyphIndex: u32,
+        contours: *Contours,
     ) !GlyphData {
         var fbs = std.io.fixedBufferStream(font.data[glyphLocation..]);
         const reader = fbs.reader();
@@ -1212,10 +1239,6 @@ pub const Font = struct {
         );
         std.log.debug("readCompoundGlyph() min {} max {}", .{ min, max });
 
-        var points = std.ArrayListUnmanaged(Point){};
-        defer points.deinit(alloc);
-        var contourEndIndices = std.ArrayList(u32).init(alloc);
-        defer contourEndIndices.deinit();
         while (true) {
             const flags: CompoundFlags = @bitCast(try reader.readInt(u16, .big));
             const childGlyphIndex = try reader.readInt(u16, .big);
@@ -1321,7 +1344,9 @@ pub const Font = struct {
             const n = @sqrt(mtx[2] * mtx[2] + mtx[3] * mtx[3]);
 
             const pos = fbs.pos;
-            var childGlyph = font.readGlyph(alloc, childGlyphIndex) catch |e| switch (e) {
+            // TODO: maybe append directly to contours if possible to decrease memory pressure?
+            var childContours: Contours = .{};
+            var childGlyph = font.readGlyph(alloc, childGlyphIndex, &childContours) catch |e| switch (e) {
                 error.NoGlyph => break,
                 else => return e,
             };
@@ -1335,15 +1360,15 @@ pub const Font = struct {
                     n * (mtx[1] * point.x + mtx[3] * point.y + mtx[5]),
                 );
             }
-
+            try contours.endIndices.ensureUnusedCapacity(alloc, childGlyph.contourEndIndices.len);
             // Add all contour end indices from the simple glyph component to the compound glyph's data
             // Note: indices must be offset to account for previously-added component glyphs
             for (childGlyph.contourEndIndices) |endIndex| {
-                try contourEndIndices.append(endIndex + @as(u32, @intCast(points.items.len)));
+                contours.endIndices.appendAssumeCapacity(endIndex + @as(u32, @intCast(contours.points.items.len)));
             }
-            try points.appendSlice(alloc, childGlyph.points);
+            try contours.points.appendSlice(alloc, childGlyph.points);
             if (pcIds) |ids| {
-                std.log.warn("pcIds {any} parent points {} child points {}", .{ ids, points.items.len, childGlyph.points.len });
+                std.log.warn("pcIds {any} parent points {} child points {}", .{ ids, contours.points.items.len, childGlyph.points.len });
                 return error.Todo;
             }
 
@@ -1353,8 +1378,8 @@ pub const Font = struct {
 
         return .{
             .glyphIndex = glyphIndex,
-            .points = try points.toOwnedSlice(alloc),
-            .contourEndIndices = try contourEndIndices.toOwnedSlice(),
+            .points = try contours.points.toOwnedSlice(alloc),
+            .contourEndIndices = try contours.endIndices.toOwnedSlice(alloc),
             .min = min,
             .max = max,
             .codepoint = undefined,
@@ -1571,9 +1596,11 @@ pub const Font = struct {
             if (f.codepoint) |cp| blk: {
                 const glyphIndex = try font.findGlyphIndex(cp);
                 try writer.print("-- codepoint '{u}' --\n  glyphIndex {}\n", .{ cp, glyphIndex });
-                var glyph = font.readGlyph(f.alloc, glyphIndex) catch break :blk;
-                try writer.print("  min {}\n  max {}\n", .{ glyph.min, glyph.max });
+                var contours: Contours = .{};
+                errdefer contours.deinit(f.alloc);
+                var glyph = font.readGlyph(f.alloc, glyphIndex, &contours) catch break :blk;
                 defer glyph.deinit(f.alloc);
+                try writer.print("  min {}\n  max {}\n", .{ glyph.min, glyph.max });
                 try writer.print(
                     "  advanceWidth {}\n  leftSideBearing {}\n  points {}\n",
                     .{ glyph.advanceWidth, glyph.leftSideBearing, glyph.points.len },

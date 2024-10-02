@@ -191,8 +191,7 @@ pub const CharstringCtx = struct {
     max: i32x2,
     numPoints: u32,
     options: Options,
-    points: std.ArrayListUnmanaged(Point) = .{},
-    contourEndIndices: std.ArrayListUnmanaged(u32) = .{},
+    contours: *ttf.Contours,
 
     const Options = union(enum) {
         /// calculate glyph bounds and count numPoints. don't allocate any points
@@ -203,7 +202,8 @@ pub const CharstringCtx = struct {
 
     /// options.boundsOnly:     calculate glyph bounds and count numPoints
     /// options.allocatePoints: allocate points and count numPoints
-    pub fn init(options: Options) CharstringCtx {
+    /// 'contours' may be undefined if boundsOnly
+    pub fn init(options: Options, contours: *ttf.Contours) CharstringCtx {
         return .{
             .started = false,
             .first = .zero,
@@ -212,11 +212,12 @@ pub const CharstringCtx = struct {
             .max = .zero,
             .numPoints = 0,
             .options = options,
+            .contours = contours,
         };
     }
     pub fn deinit(ctx: *CharstringCtx, alloc: mem.Allocator) void {
-        ctx.contourEndIndices.deinit(alloc);
-        ctx.points.deinit(alloc);
+        if (ctx.options == .allocatePoints)
+            ctx.contours.deinit(alloc);
     }
 
     fn trackVertex(ctx: *CharstringCtx, x: i32, y: i32) void {
@@ -231,8 +232,11 @@ pub const CharstringCtx = struct {
         if (ctx.first.x != ctx.xy.x or ctx.first.y != ctx.xy.y)
             try ctx.v(.vline, @intFromFloat(ctx.first.x), @intFromFloat(ctx.first.y), 0, 0, 0, 0);
         if (ctx.options == .allocatePoints) {
-            if (ctx.points.items.len != 0)
-                try ctx.contourEndIndices.append(ctx.options.allocatePoints, @intCast(ctx.points.items.len));
+            if (ctx.contours.points.items.len != 0)
+                try ctx.contours.endIndices.append(
+                    ctx.options.allocatePoints,
+                    @intCast(ctx.contours.points.items.len),
+                );
         }
     }
 
@@ -276,12 +280,21 @@ pub const CharstringCtx = struct {
         } else {
             // FIXME not sure this is 100% correct
             if (ty == .vcurve or ty == .vcubic) {
-                try ctx.points.append(ctx.options.allocatePoints, .{ .xy = .init(cx, cy), .onCurve = false });
+                try ctx.contours.points.append(
+                    ctx.options.allocatePoints,
+                    .{ .xy = .init(cx, cy), .onCurve = false },
+                );
             }
             if (ty == .vcubic) {
-                try ctx.points.append(ctx.options.allocatePoints, .{ .xy = .init(cx1, cy1), .onCurve = false });
+                try ctx.contours.points.append(
+                    ctx.options.allocatePoints,
+                    .{ .xy = .init(cx1, cy1), .onCurve = false },
+                );
             }
-            try ctx.points.append(ctx.options.allocatePoints, .{ .xy = .init(x, y), .onCurve = true });
+            try ctx.contours.points.append(
+                ctx.options.allocatePoints,
+                .{ .xy = .init(x, y), .onCurve = true },
+            );
         }
         ctx.numPoints += 1;
     }
@@ -651,13 +664,18 @@ fn getGlyphSubrs(info: *const Font, glyphIndex: u32) Buf {
     );
 }
 
-pub fn readGlyph(font: *const Font, alloc: mem.Allocator, glyphIndex: u32) !ttf.GlyphData {
-    var countCtx = CharstringCtx.init(.boundsOnly);
-    var outputCtx = CharstringCtx.init(.{ .allocatePoints = alloc });
-    defer outputCtx.deinit(alloc);
+pub fn readGlyph(
+    font: *const Font,
+    alloc: mem.Allocator,
+    glyphIndex: u32,
+    contours: *ttf.Contours,
+) !ttf.GlyphData {
+    var countCtx = CharstringCtx.init(.boundsOnly, undefined);
+    var outputCtx = CharstringCtx.init(.{ .allocatePoints = alloc }, contours);
     // run charstring to get numPoints so that we can allocate them all at once
     try runCharstring(font, glyphIndex, &countCtx);
-    try outputCtx.points.ensureTotalCapacity(alloc, outputCtx.numPoints);
+    try outputCtx.contours.points.ensureTotalCapacity(alloc, outputCtx.numPoints);
+    // don't need to defer deinit outputCtx.  its handled at a higher level.
     try runCharstring(font, glyphIndex, &outputCtx);
     assert(outputCtx.numPoints == countCtx.numPoints);
     std.log.debug(
@@ -667,8 +685,8 @@ pub fn readGlyph(font: *const Font, alloc: mem.Allocator, glyphIndex: u32) !ttf.
 
     return .{
         .glyphIndex = glyphIndex,
-        .points = try outputCtx.points.toOwnedSlice(alloc),
-        .contourEndIndices = try outputCtx.contourEndIndices.toOwnedSlice(alloc),
+        .points = try outputCtx.contours.points.toOwnedSlice(alloc),
+        .contourEndIndices = try outputCtx.contours.endIndices.toOwnedSlice(alloc),
         .min = countCtx.min,
         .max = countCtx.max,
         .advanceWidth = undefined,
