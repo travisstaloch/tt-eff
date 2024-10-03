@@ -33,6 +33,10 @@ pub fn main() !void {
     std.log.info("{s}", .{args[1]});
     var font = try ttf.Font.init(alloc, contents);
     defer font.deinit(alloc);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("{}\n", .{font.dumpFmt(parsed.result.codepoint, alloc)});
+
     var data = try font.parse(alloc); // catch ttf.Font.Data{ .unitsPerEm = 0 };
     defer data.deinit(alloc);
     if (data.glyphMap.get(0xffff) == null) {
@@ -40,8 +44,6 @@ pub fn main() !void {
     }
     // std.debug.print("{?s}\n", .{font.getName(.uniqueId)});
     // std.debug.print("numGlyphs {} unitsPerEm {}\n", .{ font.numGlyphs, data.unitsPerEm });
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("{}\n", .{font.dumpFmt(parsed.result.codepoint, alloc)});
 
     //     const scale = font.scaleForPixelHeight(40);
     //     const x_shift = 0;

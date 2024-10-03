@@ -69,6 +69,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
         });
         exe.root_module.addImport("tt-eff", mod);
+        exe.root_module.addImport("clarp", b.dependency("clarp", .{}).module("clarp"));
         const raylib_dep = b.dependency("raylib", .{});
         exe.addIncludePath(raylib_dep.path("include"));
         exe.addLibraryPath(raylib_dep.path("lib"));

@@ -2,8 +2,12 @@
 //!   https://learn.microsoft.com/en-us/typography/opentype/spec
 //!   https://developer.apple.com/fonts/TrueType-Reference-Manual/
 //!   https://tophix.com/font-tools/font-viewer
+//!
+//! similar libs:
 //!   https://github.com/nothings/stb/blob/master/stb_truetype.h
+//!   freetype
 //!   https://github.com/SebLague/Text-Rendering
+//!   https://github.com/dfrg/pinot/tree/master/moscato/src/truetype
 //!
 //!
 
@@ -488,6 +492,41 @@ pub const NameId = enum(u16) {
     darkBackgroundPalette,
     variationsPostScriptNamePrefix,
     invalid = std.math.maxInt(u16),
+};
+
+const HVar = extern struct {
+    ///    Major version number of the horizontal metrics variations table — set to 1.
+    majorVersion: u16,
+    ///    Minor version number of the horizontal metrics variations table — set to 0.
+    minorVersion: u16,
+    ///    Offset in bytes from the start of this table to the item variation store table.
+    itemVariationStoreOffset: u32,
+    ///   Offset in bytes from the start of this table to the delta-set index mapping for advance widths (may be NULL).
+    advanceWidthMappingOffset: u32,
+    ///    Offset in bytes from the start of this table to the delta-set index mapping for left side bearings (may be NULL).
+    lsbMappingOffset: u32,
+    ///    Offset in bytes from the start of this table to the delta-set index mapping for right side bearings (may be NULL).
+    rsbMappingOffset: u32,
+};
+
+/// followed by [variable]u8 mapData: The delta-set index mapping data. See details below.
+const DeltaSetIndexMap_0 = extern struct {
+    ///  DeltaSetIndexMap format: set to 0.
+    format: u8,
+    ///     A packed field that describes the compressed representation of delta-set indices. See details below.
+    entryFormat: u8,
+    ///    The number of mapping entries.
+    mapCount: u16,
+};
+
+/// followed by [variable]u8 mapData: The delta-set index mapping data. See details below.
+const DeltaSetIndexMap_1 = extern struct {
+    ///  DeltaSetIndexMap format: set to 1.
+    format: u8,
+    ///     A packed field that describes the compressed representation of delta-set indices. See details below.
+    entryFormat: u8,
+    ///    The number of mapping entries.
+    mapCount: u32,
 };
 
 pub const Point = struct {
@@ -1033,7 +1072,7 @@ pub const Font = struct {
         for (glyphMap.keys(), glyphMap.values()) |k, *v| {
             var contours: Contours = .{};
             defer contours.deinit(alloc);
-            if (font.readGlyph(alloc, v.glyphIndex, &contours)) |glyphData| {
+            if (font.readGlyph(alloc, v.glyphIndex, &contours, 0)) |glyphData| {
                 v.* = glyphData;
             } else |e| switch (e) {
                 error.NoGlyph => v.* = GlyphData.zero,
@@ -1063,9 +1102,10 @@ pub const Font = struct {
         alloc: mem.Allocator,
         glyphIndex: u32,
         contours: *Contours,
+        depth: u8,
     ) ReadGlyphError!GlyphData {
         var glyph = try if (font.cffData == null)
-            font.readGlyphTT(alloc, glyphIndex, contours)
+            font.readGlyphTT(alloc, glyphIndex, contours, depth)
             // else if (use_c)
             //     font.readGlyphT2Old(alloc, glyphIndex)
         else
@@ -1081,6 +1121,7 @@ pub const Font = struct {
         alloc: mem.Allocator,
         glyphIndex: u32,
         contours: *Contours,
+        depth: u8,
     ) ReadGlyphError!GlyphData {
         const glyphLocation = try font.getGlyphLocation(glyphIndex);
         const contourCount = font.readInt(i16, glyphLocation);
@@ -1090,9 +1131,9 @@ pub const Font = struct {
         // * Compound: two or more simple glyphs need to be looked up, transformed, and combined
         const isSimpleGlyph = contourCount >= 0;
         return if (isSimpleGlyph)
-            font.readSimpleGlyph(alloc, glyphLocation, glyphIndex, contours)
+            font.readSimpleGlyph(alloc, glyphLocation, glyphIndex, contours, depth)
         else
-            font.readCompoundGlyph(alloc, glyphLocation, glyphIndex, contours);
+            font.readCompoundGlyph(alloc, glyphLocation, glyphIndex, contours, depth);
     }
 
     const Flags = packed struct(u8) {
@@ -1112,7 +1153,9 @@ pub const Font = struct {
         glyphLocation: u32,
         glyphIndex: u32,
         contours: *Contours,
+        depth: u8,
     ) !GlyphData {
+        if (depth >= 32) return error.Recursion;
         var fbs = std.io.fixedBufferStream(font.data[glyphLocation..]);
         const reader = fbs.reader();
 
@@ -1126,6 +1169,7 @@ pub const Font = struct {
             try reader.readInt(i16, .big),
             try reader.readInt(i16, .big),
         );
+        std.log.debug("readSimpleGlyph() min {} max {}", .{ min, max });
         const contourCount: u16 = @bitCast(contourCountI);
         try contours.endIndices.ensureUnusedCapacity(alloc, contourCount);
         var numPoints: u32 = 0;
@@ -1223,6 +1267,7 @@ pub const Font = struct {
         glyphLocation: u32,
         glyphIndex: u32,
         contours: *Contours,
+        depth: u8,
     ) !GlyphData {
         var fbs = std.io.fixedBufferStream(font.data[glyphLocation..]);
         const reader = fbs.reader();
@@ -1238,10 +1283,11 @@ pub const Font = struct {
             try reader.readInt(i16, .big),
         );
         std.log.debug("readCompoundGlyph() min {} max {}", .{ min, max });
-
+        const point_base = contours.points.items.len;
         while (true) {
             const flags: CompoundFlags = @bitCast(try reader.readInt(u16, .big));
             const childGlyphIndex = try reader.readInt(u16, .big);
+            const start_point = contours.points.items.len;
             std.log.debug(
                 "childGlyphIndex {} flags xy:{} words:{}",
                 .{ childGlyphIndex, flags.args_are_xy_values, flags.arg_1_and_2_are_words },
@@ -1346,12 +1392,31 @@ pub const Font = struct {
             const pos = fbs.pos;
             // TODO: maybe append directly to contours if possible to decrease memory pressure?
             var childContours: Contours = .{};
-            var childGlyph = font.readGlyph(alloc, childGlyphIndex, &childContours) catch |e| switch (e) {
+            var childGlyph = font.readGlyph(alloc, childGlyphIndex, &childContours, depth + 1) catch |e| switch (e) {
                 error.NoGlyph => break,
                 else => return e,
             };
             defer childGlyph.deinit(alloc);
             fbs.pos = pos;
+
+            if (pcIds) |ids| {
+                const parentIndex = point_base + ids[0];
+                const childIndex = start_point + ids[1];
+                std.log.warn(
+                    "pcIds {any} parentIndex {} childIndex {} parent points {} child points {}",
+                    .{ ids, parentIndex, childIndex, contours.points.items.len, childGlyph.points.len },
+                );
+                if (parentIndex >= contours.points.items.len)
+                    return error.NoParentPoints;
+                if (childIndex >= contours.points.items.len)
+                    return error.NoChildPoints;
+                const p1 = contours.points.items[parentIndex];
+                const p2 = contours.points.items[childIndex];
+                std.log.warn("p1 {} p2 {}", .{ p1, p2 });
+                // (p1.x - p2.x, p1.y - p2.y)
+
+                return error.Todo;
+            }
 
             for (0..childGlyph.points.len) |i| {
                 const point = childGlyph.points[i].vec2();
@@ -1367,10 +1432,6 @@ pub const Font = struct {
                 contours.endIndices.appendAssumeCapacity(endIndex + @as(u32, @intCast(contours.points.items.len)));
             }
             try contours.points.appendSlice(alloc, childGlyph.points);
-            if (pcIds) |ids| {
-                std.log.warn("pcIds {any} parent points {} child points {}", .{ ids, contours.points.items.len, childGlyph.points.len });
-                return error.Todo;
-            }
 
             if (!flags.more_components) break;
         }
@@ -1573,6 +1634,7 @@ pub const Font = struct {
             try writer.print("{}\n", .{@field(h, field.name)});
         }
     }
+
     fn dumpStruct(writer: anytype, tbl: anytype) !void {
         const fields = @typeInfo(@TypeOf(tbl)).@"struct".fields;
         const maxLen = maxNameLen(fields);
@@ -1591,14 +1653,24 @@ pub const Font = struct {
         pub fn format(f: DumpFmt, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             const font = f.font;
             try writer.print("-- dump --\n{?s}\n", .{font.getName(.uniqueId)});
-            try writer.print("numGlyphs {}\n", .{font.numGlyphs});
+            const tableDirectoryPtr: *const TableDirectory = @ptrCast(@alignCast(font.data[0..@sizeOf(TableDirectory)]));
+            var tableDirectory = tableDirectoryPtr.*;
+            byteSwapAll(TableDirectory, &tableDirectory);
+            {
+                const tables: [*]const Table = @ptrCast(@alignCast(font.data.ptr + @sizeOf(TableDirectory)));
+                try writer.print("tables\n", .{});
+                for (0..tableDirectory.numTables) |i| {
+                    const tagBytes: [4]u8 = @bitCast(@intFromEnum(tables[i].tag));
+                    try writer.print("  {s}\n", .{tagBytes});
+                }
+            }
 
             if (f.codepoint) |cp| blk: {
                 const glyphIndex = try font.findGlyphIndex(cp);
-                try writer.print("-- codepoint '{u}' --\n  glyphIndex {}\n", .{ cp, glyphIndex });
+                try writer.print("codepoint '{u}'\n  glyphIndex {}\n", .{ cp, glyphIndex });
                 var contours: Contours = .{};
                 errdefer contours.deinit(f.alloc);
-                var glyph = font.readGlyph(f.alloc, glyphIndex, &contours) catch break :blk;
+                var glyph = font.readGlyph(f.alloc, glyphIndex, &contours, 0) catch break :blk;
                 defer glyph.deinit(f.alloc);
                 try writer.print("  min {}\n  max {}\n", .{ glyph.min, glyph.max });
                 try writer.print(

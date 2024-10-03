@@ -20,6 +20,11 @@ files_with_errors=[
   b'/usr/share/wine/fonts/webdings.ttf',
   b'/usr/share/wine/fonts/wingding.ttf',
   b'/usr/share/wine/fonts/marlett.ttf',
+  b'/usr/share/fonts/truetype/msttcorefonts/webdings.ttf',
+  b'/usr/share/fonts/truetype/msttcorefonts/Webdings.ttf',
+  b'/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf',
+]
+files_unsupported = [
   b'/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf',
   b'/usr/share/fonts/truetype/ubuntu/Ubuntu-C.ttf',
   b'/usr/share/fonts/truetype/ubuntu/UbuntuMono-BI.ttf',
@@ -45,7 +50,6 @@ files_with_errors=[
   b'/usr/share/fonts/truetype/msttcorefonts/Georgia_Bold.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/arialbi.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman_Bold.ttf',
-  b'/usr/share/fonts/truetype/msttcorefonts/webdings.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/Courier_New_Bold_Italic.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/timesbi.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/georgiai.ttf',
@@ -59,7 +63,6 @@ files_with_errors=[
   b'/usr/share/fonts/truetype/msttcorefonts/verdanai.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/andalemo.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/Verdana_Italic.ttf',
-  b'/usr/share/fonts/truetype/msttcorefonts/Webdings.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/Georgia.ttf',
   b'/usr/share/fonts/truetype/msttcorefonts/Verdana_Bold_Italic.ttf',
@@ -88,7 +91,6 @@ files_with_errors=[
   b'/usr/share/fonts/truetype/noto/NotoSerifMyanmar-Regular.ttf',
   b'/usr/share/fonts/truetype/noto/NotoSerifDisplay-Bold.ttf',
   b'/usr/share/fonts/truetype/noto/NotoSansDisplay-Bold.ttf',
-  b'/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf',
   b'/usr/share/fonts/truetype/noto/NotoSerif-Regular.ttf',
   b'/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf',
   b'/usr/share/fonts/truetype/noto/NotoSerif-Bold.ttf',
@@ -99,33 +101,47 @@ files_with_errors=[
   b'/usr/share/fonts/truetype/freefont/FreeSerif.ttf',
 ]
 
-error_count = 0
+errorcount = 0
 for file in files:
   if file in long_files:
     continue
-  files_to_skip = files_with_errors[0:3]
+  files_to_skip = files_with_errors
   if file in files_to_skip:
     continue
-  args = ['zig',  'build',  'run', '-Doptimize=ReleaseSafe',  '--',  file]
-  # args = ['zig',  'build',  'run', '-Doptimize=ReleaseFast',  '--',  file]
-  # args = ['zig',  'build',  'run',  '--',  file]
+  # args = ['zig',  'build',  'run', '-Doptimize=ReleaseSafe',  '--',  file, 'a']
+  # args = ['zig',  'build',  'run', '-Doptimize=ReleaseFast',  '--',  file, 'a']
+  # args = ['zig',  'build',  'run', '-Doptimize=ReleaseSmall',  '--',  file, 'a']
+  args = ['zig',  'build',  'run',  '--',  file, 'a']
   result = Popen(args, stdout=PIPE, stderr=PIPE)
   output, err = result.communicate()
-
-  output = output.decode('utf-8')
-  err = err.decode('utf-8')
+  # print(f"{file},")
+  try:
+    output = output.decode('utf-8', errors='backslashreplace')
+  except:
+    print(f"decode error in {file}")
+    output = "stdout decode error"
+  try:
+    err = err.decode('utf-8', errors='backslashreplace')
+  except:
+    print(f"decode error in {file}")
+    err = "stderr decode error"
   if result.returncode != 0:
-    error_count += 1
-    print(f"{file},")
-    if "egfault" in err or "egfault" in output:
-      print(output)
-      print(err)
+    errorcount += 1
+    eprint(f"{file},")
+    if "NoChildPoints" in err:
+      eprint(err)
       break
-  else:
-    # print(file, err)
-    pass
 
-percent = len(files_to_skip) / len(files) * 100.0
-errpercent = error_count / len(files) * 100.0
+total = len(files)
+skipcount = len(files_to_skip)
+failcount = errorcount + skipcount
+okcount = total - failcount
 
-print(f"errors {error_count} / ({len(files)} {errpercent:.2f}%) skipped {len(files_to_skip)} / ({len(files)} {percent:.2f}%)")
+skippercent = skipcount / total * 100.0
+errpercent = errorcount / total * 100.0
+successpercent = 100.0 - failcount / total * 100
+
+print(f"ok/errored/skipped/total {okcount}/{errorcount}/{skipcount}/{total}")
+print(f"success rate             {successpercent:.2f}% {okcount}/{total}")
+print(f"errors rate              {errpercent:.2f}% {errorcount}/{total}")
+print(f"skip rate                {skippercent:.2f}%  {skipcount}/{total}")

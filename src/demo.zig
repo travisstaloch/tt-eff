@@ -6,11 +6,22 @@ const GlyphHelper = ttf.GlyphHelper;
 const rl = @cImport(@cInclude("raylib.h"));
 const f32x2 = ttf.f32x2;
 const i32x2 = ttf.i32x2;
+const clarp = @import("clarp");
 const wh = f32x2.init(1920, 1080);
 
-pub const std_options = std.Options{
-    .log_level = .info,
-};
+pub const std_options = std.Options{ .log_level = .info };
+
+const ArgParser = clarp.Parser(struct {
+    file: []const u8,
+    codepoint: ?u21,
+    pub const clarp_options = clarp.Options(@This()){
+        .derive_short_names = true,
+        .fields = .{
+            .file = .{ .positional = true },
+            .codepoint = .{ .positional = true, .utf8 = true },
+        },
+    };
+}, .{});
 
 pub fn debug(comptime fmt: []const u8, args: anytype) void {
     _ = fmt; // autofix
@@ -25,9 +36,10 @@ pub fn main() !void {
     const alloc = gpa.allocator();
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
+    const parsed = try ArgParser.parse(args, .{ .err_writer = std.io.getStdErr().writer().any() });
+    std.debug.print("{s}\n", .{parsed.result.file});
 
-    if (args.len < 2) return error.MissingFileArg;
-    const f = try std.fs.cwd().openFile(args[1], .{});
+    const f = try std.fs.cwd().openFile(parsed.result.file, .{});
     defer f.close();
     const contents = try f.readToEndAlloc(alloc, std.math.maxInt(u32));
     defer alloc.free(contents);
@@ -37,7 +49,11 @@ pub fn main() !void {
     var fontData = try font.parse(alloc);
     defer fontData.deinit(alloc);
 
-    const text: []const u8 = if (true) try std.mem.concat(alloc, u8, &.{
+    const text: []const u8 = if (parsed.result.codepoint) |cp|
+        try std.mem.concat(alloc, u8, &.{
+            std.mem.asBytes(&cp),
+        })
+    else if (true) try std.mem.concat(alloc, u8, &.{
         font.getName(.familyName) orelse "Missing family name",
         "-",
         font.getName(.subfamilyName) orelse "Missing sub family name",
@@ -47,9 +63,7 @@ pub fn main() !void {
         "\nABCDEFGHI",
         "\nJKLMNOPQR",
         "\nSTUVWXYZ",
-    })
-    // try alloc.dupe(u8, "ABC")
-    else blk: {
+    }) else blk: {
         const glyphs = fontData.glyphs[0..100];
         const text = try alloc.alloc(u8, glyphs.len);
         @memset(text, '\n');
@@ -81,7 +95,7 @@ pub fn main() !void {
     );
     defer GlyphHelper.destroyRenderDataMap(&renderDataMap, alloc);
     debug("renderDataMap {any}\n", .{renderDataMap.keys()});
-    const settings = ttf.TextRender.LayoutSettings.init(1.0 / 2.0, 1, 2.1, 1, wh);
+    const settings = ttf.TextRender.LayoutSettings.init(0.5, 1, 2.1, 1, wh);
 
     // debug("B pc min {}/{} max {},{} advanceWidth/lsb {},{}", .{ pc.min.x, pc.min.y, pc.max.x, pc.max.y, pc.advanceWidth, pc.leftSideBearing });
     // debug("B pc contourEndIndices {any}", .{pc.contourEndIndices});
@@ -134,30 +148,29 @@ fn drawTextData(
     resolution: u16,
     settings: ttf.TextRender.LayoutSettings,
 ) !void {
-    var lastPosn = f32x2.initS(std.math.floatMax(f32));
+    var lastPos = f32x2.initS(std.math.floatMax(f32));
     for (textData.printableCharacters) |pc| {
         const posn = f32x2.init(
             pc.getAdvanceX(settings.fontSizePx, settings.letterSpacing, settings.wordSpacing),
             pc.getAdvanceY(settings.fontSizePx, settings.lineSpacing),
         );
-        if (posn.y != lastPosn.y) {
+        const pos = settings.scaleNormalized(posn);
+        if (pos.y != lastPos.y) {
             // draw horizontal gray line at newlines
             rl.DrawLineV(
-                @bitCast(f32x2.init(0, pc.offsetY)),
-                @bitCast(f32x2.init(wh.x * 1000, pc.offsetY)),
+                @bitCast(f32x2.init(0, pos.y)),
+                @bitCast(f32x2.init(wh.x * 1000, pos.y)),
                 rl.GRAY,
             );
         }
-        lastPosn = posn;
+        lastPos = pos;
 
         const glyphData = textData.uniquePrintableCharacters[pc.uniqueGlyphIndex];
-        const cp: u21 = @intCast(glyphData.unicodeValue);
-        const bc = renderDataMap.get(cp).?;
-        const pos = settings.scaleNormalized(posn);
+        const bc = renderDataMap.get(glyphData.codepoint).?;
 
-        std.debug.print(
+        debug(
             "{u} posn {d:.1} pos {d:.0}  centre {d:.1} size {d:.1} contours {} settings {d:.1}/{d:.1}/{d:.1}/{d:.1}\n",
-            .{ cp, posn, pos, bc.glyphBounds.centre, bc.glyphBounds.size, bc.contours.endIndices.len, settings.fontSizePx, settings.letterSpacing, settings.lineSpacing, settings.wordSpacing },
+            .{ glyphData.codepoint, posn, pos, bc.glyphBounds.centre, bc.glyphBounds.size, bc.contours.endIndices.len, settings.fontSizePx, settings.letterSpacing, settings.lineSpacing, settings.wordSpacing },
         );
         drawGlyph(glyphData, bc, pos, resolution, settings);
     }
@@ -192,7 +205,7 @@ fn drawGlyph(
             const p1 = bc.contours.points[i + 1];
             const p2 = bc.contours.points[i + 2];
 
-            // debug("ps[{}] {d:.1}, {d:.1}, {d:.1}\n", .{ i, p0, p1, p2 });
+            debug("ps[{}..{}] {d:.1}, {d:.1}, {d:.1}\n", .{ i, i + 2, p0, p1, p2 });
             const vs: [3]f32x2 = .{
                 adjust(p0, pos, bc.glyphBounds, settings),
                 adjust(p1, pos, bc.glyphBounds, settings),

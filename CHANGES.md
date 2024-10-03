@@ -1,0 +1,4 @@
+- [x] parse naming table data
+- [x] convert some snake case idents to camel (this project uses camel case identifiers and functions)
+- [x] use u21 for codepoints instead of u32
+- [x] don't allocate in applyLayoutInfo(). instead create and getLayoutInfo(glyphIndex)
